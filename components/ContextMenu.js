@@ -17,7 +17,10 @@ export default function ContextMenu({
   offsetY = 0,
   compact = false,
   maxWidth,
+  itemLabelFontSize,
+  itemLabelFontWeight = '400',
 }) {
+  const labelFontSize = itemLabelFontSize != null ? itemLabelFontSize : (compact ? 12 : 14);
   const dims = useWindowDimensions();
   const menuRef = React.useRef(null);
   const [menuSize, setMenuSize] = React.useState({ width: 0, height: 0 });
@@ -296,9 +299,9 @@ export default function ContextMenu({
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{
-                    fontSize: compact ? 12 : 14,
+                    fontSize: labelFontSize,
                     color: textColor,
-                    fontWeight: (item.danger || isSelected) ? '600' : '400',
+                    fontWeight: (item.danger || isSelected) ? '600' : itemLabelFontWeight,
                   }} numberOfLines={1}>
                     {item.label}
                   </Text>

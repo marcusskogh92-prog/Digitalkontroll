@@ -8,6 +8,7 @@
 
 import { getSharePointSiteForPhase } from '../../components/firebase';
 import { getAccessToken } from '../azure/authService';
+import { normalizeSiteIdForGraph } from '../azure/graphSiteId';
 
 const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
 
@@ -39,19 +40,35 @@ export async function getSharePointFolderItems(siteId, folderPath = '/') {
   if (!siteId) {
     throw new Error('SharePoint Site ID is required');
   }
+  siteId = normalizeSiteIdForGraph(siteId);
 
   const accessToken = await getAccessToken();
   if (!accessToken) {
     throw new Error('Failed to get access token. Please authenticate first.');
   }
 
-  // Normalize path
-  const normalizedPath = folderPath === '/' || !folderPath 
-    ? '/' 
-    : '/' + folderPath.replace(/^\/+|\/+$/g, '');
+  // Normalize path – för root använd /drive/root/children, inte root:/:/children
+  const isRoot = folderPath === '/' || !String(folderPath || '').trim();
+  let endpoint = isRoot
+    ? `${GRAPH_API_BASE}/sites/${siteId}/drive/root/children`
+    : (() => {
+        // Path utan inledande snedstreck – Graph API kan ge 404 med leading slash
+        const path = String(folderPath || '').replace(/^\/+|\/+$/g, '').trim();
+        if (!path) return `${GRAPH_API_BASE}/sites/${siteId}/drive/root/children`;
+        const encoded = encodeGraphPathSegments(path);
+        return `${GRAPH_API_BASE}/sites/${siteId}/drive/root:/${encoded}:/children`;
+      })();
 
-  const encodedPath = encodeGraphPathSegments(normalizedPath);
-  const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/root:${encodedPath}:/children`;
+  // Last-second fix: if URL still has wrong siteId format (dots), normalize
+  const siteIdInUrl = endpoint.match(/\/sites\/([^/]+)\//);
+  if (siteIdInUrl && siteIdInUrl[1]) {
+    const raw = siteIdInUrl[1];
+    const hasWrongFormat = raw.includes('.sharepoint.com.') || /[0-9a-f-]+\.[0-9a-f]{8}/i.test(raw);
+    if (hasWrongFormat) {
+      const fixedSiteId = normalizeSiteIdForGraph(raw);
+      endpoint = endpoint.replace(raw, fixedSiteId);
+    }
+  }
 
   try {
     const response = await fetch(endpoint, {
@@ -100,19 +117,22 @@ export async function getSharePointFolderTree(siteId, rootPath = '/', maxDepth =
   if (!siteId) {
     throw new Error('SharePoint Site ID is required');
   }
+  siteId = normalizeSiteIdForGraph(siteId);
 
   const accessToken = await getAccessToken();
   if (!accessToken) {
     throw new Error('Failed to get access token. Please authenticate first.');
   }
 
-  // Normalize path
+  // Normalize path – utan inledande snedstreck för Graph API
   const normalizedPath = rootPath === '/' || !rootPath 
-    ? '/' 
-    : '/' + rootPath.replace(/^\/+|\/+$/g, '');
+    ? '' 
+    : String(rootPath).replace(/^\/+|\/+$/g, '').trim();
 
   // Get root folder info
-  const rootEndpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/root:${normalizedPath}:`;
+  const rootEndpoint = normalizedPath
+    ? `${GRAPH_API_BASE}/sites/${siteId}/drive/root:/${encodeGraphPathSegments(normalizedPath)}:`
+    : `${GRAPH_API_BASE}/sites/${siteId}/drive/root`;
   
   try {
     const rootResponse = await fetch(rootEndpoint, {
@@ -158,7 +178,9 @@ async function loadSharePointChildrenRecursive(parentItem, siteId, parentPath, a
   }
 
   try {
-    const childrenEndpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/root:${parentPath}:/children`;
+    const childrenEndpoint = !parentPath
+      ? `${GRAPH_API_BASE}/sites/${siteId}/drive/root/children`
+      : `${GRAPH_API_BASE}/sites/${siteId}/drive/root:/${encodeGraphPathSegments(parentPath)}:/children`;
     const response = await fetch(childrenEndpoint, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -174,9 +196,7 @@ async function loadSharePointChildrenRecursive(parentItem, siteId, parentPath, a
     const items = data.value || [];
 
     for (const item of items) {
-      const itemPath = parentPath === '/' 
-        ? `/${item.name}` 
-        : `${parentPath}/${item.name}`;
+      const itemPath = !parentPath ? item.name : `${parentPath}/${item.name}`;
 
       const childItem = {
         id: item.id,

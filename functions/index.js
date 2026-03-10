@@ -8,20 +8,32 @@ const { extractTextByMimeType } = require('./services/fileTextExtractor');
 
 const IS_EMULATOR = process.env.FUNCTIONS_EMULATOR === 'true';
 
-const { syncSharePointSiteVisibility } = require('./sharepointVisibility');
-const { provisionCompanyImpl } = require('./companyProvisioning');
+const { syncSharePointSiteVisibility, upsertCompanySharePointSiteMeta } = require('./sharepointVisibility');
+const { provisionCompanyImpl, provisionCompanySharePointImpl } = require('./companyProvisioning');
+const { createSharePointSiteImpl } = require('./sharepointProvisioning');
 const { createUser, deleteUser, updateUser } = require('./userAdmin');
 const { requestSubscriptionUpgrade } = require('./billing');
 const { setSuperadmin } = require('./superadmin');
 const { adminFetchCompanyMembers, setCompanyStatus, setCompanyUserLimit, setCompanyName } = require('./companyAdmin');
-const { purgeCompany } = require('./companyPurge');
+const { purgeCompany, purgeAllCompaniesExceptMSByggsystem } = require('./companyPurge');
 const { devResetAdmin } = require('./devReset');
 const { deleteProject, deleteFolder } = require('./deleteOperations');
+const { ssoEntraLoginImpl } = require('./ssoEntraLogin');
+const {
+  getSharePointGraphAccessToken,
+  getSharePointHostname,
+  getSharePointProvisioningAccessToken,
+} = require('./sharedConfig');
 
 exports.syncSharePointSiteVisibility = functions.https.onCall(syncSharePointSiteVisibility);
+exports.upsertCompanySharePointSiteMeta = functions.https.onCall(upsertCompanySharePointSiteMeta);
 
-exports.provisionCompany = functions.https.onCall(provisionCompanyImpl);
+// SharePoint-etablering (Site + Bas) kan ta 1–2 minuter – 180s så att Bas hinner skapas även vid långsamma svar från Graph.
+exports.provisionCompany = functions.runWith({ timeoutSeconds: 180, memory: '256MB' }).https.onCall(provisionCompanyImpl);
 exports.provisionCompanyImpl = provisionCompanyImpl;
+exports.provisionCompanySharePoint = functions.runWith({ timeoutSeconds: 180, memory: '256MB' }).https.onCall(provisionCompanySharePointImpl);
+// Skapande av en SharePoint-site via Graph kan ta 1–2 minuter – 180s timeout som provisionCompany.
+exports.createSharePointSite = functions.runWith({ timeoutSeconds: 180, memory: '256MB' }).https.onCall(createSharePointSiteImpl);
 
 exports.createUser = functions.https.onCall(createUser);
 exports.requestSubscriptionUpgrade = functions.https.onCall(requestSubscriptionUpgrade);
@@ -34,11 +46,26 @@ exports.setCompanyStatus = functions.https.onCall(setCompanyStatus);
 exports.setCompanyUserLimit = functions.https.onCall(setCompanyUserLimit);
 exports.setCompanyName = functions.https.onCall(setCompanyName);
 exports.purgeCompany = functions.https.onCall(purgeCompany);
+exports.purgeAllCompaniesExceptMSByggsystem = functions.runWith({ timeoutSeconds: 300, memory: '256MB' }).https.onCall(purgeAllCompaniesExceptMSByggsystem);
 
 exports.devResetAdmin = functions.https.onCall(devResetAdmin);
 
 exports.deleteProject = functions.https.onCall(deleteProject);
 exports.deleteFolder = functions.https.onCall(deleteFolder);
+
+// SSO: Entra id_token → Firebase custom token (endast befintliga användare)
+exports.ssoEntraLogin = functions.https.onCall(ssoEntraLoginImpl);
+
+exports.getDefaultAIPrompt = functions.https.onCall((data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+  const promptKey = String((data && data.promptKey) || '').trim();
+  if (promptKey === 'ffu') {
+    return getDefaultFFUPromptForDisplay();
+  }
+  return { system: '', userTemplate: '' };
+});
 
 function readFunctionsConfigValue(path, fallback = null) {
   try {
@@ -70,13 +97,17 @@ function sha256Hex(input) {
   return crypto.createHash('sha256').update(String(input || ''), 'utf8').digest('hex');
 }
 
-function buildFFUPrompt({ companyId, projectId, files }) {
+function buildFFUPrompt({ companyId, projectId, files, customInstruction }) {
   const safeFiles = (Array.isArray(files) ? files : []).map((f) => ({
     id: f && f.id != null ? String(f.id) : '',
     name: f && f.name != null ? String(f.name) : '',
     type: f && f.type != null ? String(f.type) : '',
     extractedText: f && f.extractedText != null ? String(f.extractedText) : '',
   }));
+
+  const customBlock = (customInstruction && String(customInstruction).trim())
+    ? `\n\nFöretagets extra instruktion (följ denna särskilt):\n${String(customInstruction).trim()}\n`
+    : '';
 
   const system = [
     'Du är en noggrann assistent som analyserar svenska förfrågningsunderlag (FFU).',
@@ -112,17 +143,106 @@ function buildFFUPrompt({ companyId, projectId, files }) {
     '- requirements.should: endast utvärderande/meriterande BÖR-krav.',
     '- risks: endast oklarheter, saknad info eller flertydighet baserat på texten (inga gissningar).',
     '- openQuestions: frågor som bör ställas baserat på brister/oklarheter i texten.',
+    '- projectInfo: VIKTIGT – fyll i alla fält som du hittar i dokumenten. Sök efter:',
+    '  * upphandlingsform/entreprenadform: "offentlig upphandling", "privat upphandling", "totalentreprenad", "utförandeentreprenad" m.m.',
+    '  * customerCompany: beställare, upphandlare, kund, företagsnamn.',
+    '  * customerOrganizationNumber: organisationsnummer, org.nr (siffror med eventuellt bindestreck).',
+    '  * contactPerson/contactPhone/contactEmail: kontaktperson, telefon, e-post, e-postadress.',
+    '  * addressStreet/addressCity/addressMunicipality: projektadress, byggadress, plats, gatuadress, ort, kommun, postnummer.',
+    '  * fastighetsbeteckning: fastighet, fastighetsbeteckning.',
+    '  * lastQuestionDate: "sista dag för frågor", "sista dag att ställa frågor" – skriv som ISO YYYY-MM-DD.',
+    '  * tenderSubmissionDate: "anbudsinlämning", "anbudstid", "sista dag för anbud" – ISO YYYY-MM-DD.',
+    '  * plannedConstructionStart: "byggstart", "planerad byggstart", "start byggnad" – ISO YYYY-MM-DD.',
+    '  * readyForInspectionDate: "klart för besiktning", "färdigställning", "slutbesiktning" – ISO YYYY-MM-DD.',
+    '  Om ett datum står som t.ex. 2026-03-15 eller 15/3 2026, skriv alltid ISO-format YYYY-MM-DD. Lämna tom sträng endast om informationen verkligen saknas.',
     '',
     'Returnera JSON i exakt detta format:',
     '{',
     '  "summary": { "description": "", "projectType": "", "procurementForm": "" },',
     '  "requirements": { "must": [ { "text": "", "source": "" } ], "should": [ { "text": "", "source": "" } ] },',
     '  "risks": [ { "issue": "", "reason": "" } ],',
-    '  "openQuestions": [ { "question": "", "reason": "" } ]',
+    '  "openQuestions": [ { "question": "", "reason": "" } ],',
+    '  "projectInfo": { "upphandlingsform": "", "entreprenadform": "", "customerCompany": "", "customerOrganizationNumber": "", "contactPerson": "", "contactPhone": "", "contactEmail": "", "addressStreet": "", "addressCity": "", "addressMunicipality": "", "fastighetsbeteckning": "", "lastQuestionDate": "", "tenderSubmissionDate": "", "plannedConstructionStart": "", "readyForInspectionDate": "" }',
     '}',
+    customBlock,
   ].join('\n');
 
   return { system, user };
+}
+
+/** Return default FFU prompt text for display in admin UI (system + user template with placeholder for documents). */
+function getDefaultFFUPromptForDisplay() {
+  const system = [
+    'Du är en noggrann assistent som analyserar svenska förfrågningsunderlag (FFU).',
+    'Du får ENDAST använda texten som tillhandahålls i detta anrop. Om något inte framgår av texten ska du skriva tom sträng eller utelämna det genom att inte hitta något (t.ex. tomma listor).',
+    'Du får INTE göra antaganden om AF/AB/TB, entreprenadform, juridik eller praxis om det inte uttryckligen står i texten.',
+    'Om källhänvisning inte går att avgöra exakt: ange dokumentnamn och en kort beskrivning av var i texten (t.ex. "Bilaga 2 – Kravspec, avsnitt 3") eller lämna "source" som tom sträng.',
+    'Returnera ENDAST giltig JSON som exakt matchar det efterfrågade formatet. Ingen Markdown. Inga extra nycklar.',
+  ].join('\n');
+
+  const userTemplate = [
+    'Analysera följande FFU som ett sammanhängande underlag.',
+    '',
+    'companyId: [väljs vid körning]',
+    'projectId: [väljs vid körning]',
+    '',
+    'Dokument (med extraherad text):',
+    '[Dokumenten från förfrågningsunderlaget läggs in här vid analys]',
+    '',
+    'Krav på output:',
+    '- summary.description: kort sammanfattning av vad upphandlingen avser.',
+    '- summary.projectType: projekt-/uppdragstyp om den står i texten, annars "".',
+    '- summary.procurementForm: entreprenad-/upphandlingsform endast om explicit angiven, annars "".',
+    '- requirements.must: endast obligatoriska SKA-krav.',
+    '- requirements.should: endast utvärderande/meriterande BÖR-krav.',
+    '- risks: endast oklarheter, saknad info eller flertydighet baserat på texten (inga gissningar).',
+    '- openQuestions: frågor som bör ställas baserat på brister/oklarheter i texten.',
+    '- projectInfo: upphandlingsform, entreprenadform, beställare/kund (företag, org.nr, kontaktperson, telefon, e-post), adress (gata, ort, kommun, fastighet), viktiga datum (ISO YYYY-MM-DD). Endast om uttryckligen i texten, annars tomma strängar.',
+    '',
+    'Returnera JSON i exakt detta format:',
+    '{',
+    '  "summary": { "description": "", "projectType": "", "procurementForm": "" },',
+    '  "requirements": { "must": [ { "text": "", "source": "" } ], "should": [ { "text": "", "source": "" } ] },',
+    '  "risks": [ { "issue": "", "reason": "" } ],',
+    '  "openQuestions": [ { "question": "", "reason": "" } ],',
+    '  "projectInfo": { "upphandlingsform": "", "entreprenadform": "", "customerCompany": "", "customerOrganizationNumber": "", "contactPerson": "", "contactPhone": "", "contactEmail": "", "addressStreet": "", "addressCity": "", "addressMunicipality": "", "fastighetsbeteckning": "", "lastQuestionDate": "", "tenderSubmissionDate": "", "plannedConstructionStart": "", "readyForInspectionDate": "" }',
+    '}',
+  ].join('\n');
+
+  return { system, userTemplate };
+}
+
+/** Parse common Swedish/generic date string to Date; returns null if invalid. Handles YYYY-MM-DD, DD/MM/YYYY, DD.MM.YYYY, etc. */
+function parseSwedishOrCommonDate(s) {
+  const raw = String(s || '').trim();
+  if (!raw) return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (iso) return new Date(parseInt(iso[1], 10), parseInt(iso[2], 10) - 1, parseInt(iso[3], 10));
+  const dmy = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.exec(raw);
+  if (dmy) return new Date(parseInt(dmy[3], 10), parseInt(dmy[2], 10) - 1, parseInt(dmy[1], 10));
+  const parsed = Date.parse(raw);
+  if (Number.isFinite(parsed)) return new Date(parsed);
+  return null;
+}
+
+function emptyFFUProjectInfo() {
+  return {
+    upphandlingsform: '',
+    entreprenadform: '',
+    customerCompany: '',
+    customerOrganizationNumber: '',
+    contactPerson: '',
+    contactPhone: '',
+    contactEmail: '',
+    addressStreet: '',
+    addressCity: '',
+    addressMunicipality: '',
+    fastighetsbeteckning: '',
+    lastQuestionDate: '',
+    tenderSubmissionDate: '',
+    plannedConstructionStart: '',
+    readyForInspectionDate: '',
+  };
 }
 
 function emptyFFUAnalysisResult(message) {
@@ -139,6 +259,7 @@ function emptyFFUAnalysisResult(message) {
     },
     risks: [],
     openQuestions: [],
+    projectInfo: emptyFFUProjectInfo(),
   };
 }
 
@@ -164,6 +285,40 @@ function normalizeFFUAnalysisResult(raw) {
     reason: q && q.reason != null ? String(q.reason) : '',
   });
 
+  const pi = obj && obj.projectInfo && typeof obj.projectInfo === 'object' ? obj.projectInfo : {};
+  const get = (o, ...keys) => {
+    for (const k of keys) {
+      const v = o && o[k];
+      if (v != null && String(v).trim() !== '') return String(v).trim();
+    }
+    return '';
+  };
+  const str = (v) => (v != null && v !== '' ? String(v).trim() : '');
+  const toIsoDate = (v) => {
+    const s = str(v);
+    if (!s) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const d = parseSwedishOrCommonDate(s);
+    return d ? d.toISOString().slice(0, 10) : '';
+  };
+  const projectInfo = {
+    upphandlingsform: get(pi, 'upphandlingsform') || get(summary, 'procurementForm', 'upphandlingsform'),
+    entreprenadform: get(pi, 'entreprenadform'),
+    customerCompany: get(pi, 'customerCompany', 'kund', 'beställare'),
+    customerOrganizationNumber: get(pi, 'customerOrganizationNumber', 'organisationsnummer'),
+    contactPerson: get(pi, 'contactPerson', 'kontaktperson'),
+    contactPhone: get(pi, 'contactPhone', 'telefon'),
+    contactEmail: get(pi, 'contactEmail', 'epost', 'email'),
+    addressStreet: get(pi, 'addressStreet', 'adress', 'gatuadress'),
+    addressCity: get(pi, 'addressCity', 'ort', 'stad'),
+    addressMunicipality: get(pi, 'addressMunicipality', 'kommun'),
+    fastighetsbeteckning: get(pi, 'fastighetsbeteckning', 'fastighet'),
+    lastQuestionDate: toIsoDate(pi.lastQuestionDate || pi.sistaDagForFragor),
+    tenderSubmissionDate: toIsoDate(pi.tenderSubmissionDate || pi.anbudsinlamning),
+    plannedConstructionStart: toIsoDate(pi.plannedConstructionStart || pi.planeradByggstart || pi.byggstart),
+    readyForInspectionDate: toIsoDate(pi.readyForInspectionDate || pi.klartForBesiktning || pi.fardigstallning),
+  };
+
   return {
     summary: {
       description: summary.description != null ? String(summary.description) : '',
@@ -176,6 +331,7 @@ function normalizeFFUAnalysisResult(raw) {
     },
     risks: risksArr.map(normalizeRisk).filter((x) => x.issue.trim()),
     openQuestions: openArr.map(normalizeQ).filter((x) => x.question.trim()),
+    projectInfo,
   };
 }
 
@@ -272,10 +428,128 @@ async function callOpenAIForFFUAnalysis({ apiKey, system, user }) {
   }
 }
 
+/** OpenAI chat completions for plain text (no JSON). Used for inquiry drafts. */
+async function callOpenAIPlainText({ apiKey, system, user }) {
+  const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+    }),
+  });
+  const rawText = await res.text();
+  if (!res.ok) throw new Error(`OpenAI error: ${res.status} - ${rawText}`);
+  const data = JSON.parse(rawText);
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content === 'string' && content.trim()) return content.trim();
+  throw new Error('OpenAI response missing message content');
+}
+
+/** Read latest FFU analysis from Firestore for inquiry generation. Returns { summary, requirements, risks, questions } or null. */
+async function getLatestFFUAnalysisForInquiry(companyId, projectId) {
+  const canonical = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const legacy = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  let snap = await canonical.get().catch(() => null);
+  if (!snap || !snap.exists) snap = await legacy.get().catch(() => null);
+  if (!snap || !snap.exists) return null;
+  const d = snap.data() || {};
+  if (String(d.status || '').trim() !== 'success') return null;
+  const summary = String(d.summary || '').trim();
+  const req = d.requirements && typeof d.requirements === 'object' ? d.requirements : {};
+  const ska = Array.isArray(req.ska) ? req.ska : (Array.isArray(req.must) ? req.must : []);
+  const bor = Array.isArray(req.bor) ? req.bor : (Array.isArray(req.should) ? req.should : []);
+  const requirements = [...ska, ...bor].map((x) => (typeof x === 'string' ? x : (x && x.text ? x.text : '')).trim()).filter(Boolean);
+  const risks = Array.isArray(d.risks) ? d.risks.map((r) => (typeof r === 'string' ? r : (r && (r.issue || r.reason) ? `${r.issue || ''} ${r.reason || ''}`.trim() : '')).trim()).filter(Boolean) : [];
+  const questions = Array.isArray(d.questions) ? d.questions.map((q) => (typeof q === 'string' ? q : (q && (q.question || q.reason) ? `${q.question || ''} ${q.reason || ''}`.trim() : '')).trim()).filter(Boolean) : [];
+  return { summary, requirements, risks, questions };
+}
+
+// AI: Generate generic inquiry draft from FFU analysis (for inköpsrad)
+exports.generateInquiryDraft = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
+  const projectId = (data && data.projectId) ? String(data.projectId).trim() : '';
+  if (!companyId || !projectId) throw new functions.https.HttpsError('invalid-argument', 'companyId and projectId are required');
+  assertAnalyzeFFUPermission({ companyId, context });
+
+  const rowName = (data && data.rowName != null) ? String(data.rowName).trim() : '';
+  const ffu = await getLatestFFUAnalysisForInquiry(companyId, projectId);
+  if (!ffu || !ffu.summary) {
+    throw new functions.https.HttpsError('failed-precondition', 'Ingen AI-analys finns för projektet. Kör först AI-analys under Förfrågningsunderlag.');
+  }
+
+  const apiKey = getOpenAIKey();
+  if (!apiKey) throw new functions.https.HttpsError('failed-precondition', 'AI är inte konfigurerad (saknar API-nyckel).');
+
+  const itemContext = rowName ? ` för upphandlingsposten "${rowName}"` : '';
+  const userPrompt = `Projektets AI-analys (förfrågningsunderlag):
+
+Sammanfattning:
+${ffu.summary}
+
+${ffu.requirements.length ? `Krav/önskemål:\n${ffu.requirements.map((r) => `- ${r}`).join('\n')}\n` : ''}
+${ffu.risks.length ? `Oklarheter/risker:\n${ffu.risks.map((r) => `- ${r}`).join('\n')}\n` : ''}
+${ffu.questions.length ? `Öppna frågor:\n${ffu.questions.map((q) => `- ${q}`).join('\n')}\n` : ''}
+
+Skriv ett kort, professionellt utkast till förfrågan (e-posttext)${itemContext} som vi kan skicka till installatörer och underentreprenörer. Språk: svenska. Inkludera bara e-posttexten (ingen rubrik). Håll tonen tydlig och affärsmässig.`;
+  const systemPrompt = 'Du är en assistent som skriver korta, professionella förfrågningstexter till underentreprenörer och installatörer baserat på projektinformation. Svara endast med e-posttexten, inget annat.';
+  let text;
+  try {
+    text = await callOpenAIPlainText({ apiKey, system: systemPrompt, user: userPrompt });
+  } catch (e) {
+    console.error('generateInquiryDraft failed', { message: String(e && e.message ? e.message : e), companyId, projectId });
+    throw new functions.https.HttpsError('internal', 'Kunde inte generera utkast. Försök igen.');
+  }
+  return { text: text || '' };
+});
+
+// AI: Generate personalized inquiry for a supplier (contact name + company)
+exports.generatePersonalizedInquiry = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
+  const projectId = (data && data.projectId) ? String(data.projectId).trim() : '';
+  if (!companyId || !projectId) throw new functions.https.HttpsError('invalid-argument', 'companyId and projectId are required');
+  assertAnalyzeFFUPermission({ companyId, context });
+
+  const inquiryDraftText = (data && data.inquiryDraftText != null) ? String(data.inquiryDraftText).trim() : '';
+  const contactName = (data && data.contactName != null) ? String(data.contactName).trim() : '';
+  const supplierCompanyName = (data && data.supplierCompanyName != null) ? String(data.supplierCompanyName).trim() : '';
+  if (!inquiryDraftText) {
+    throw new functions.https.HttpsError('invalid-argument', 'inquiryDraftText saknas. Generera först ett utkast på inköpsraden.');
+  }
+
+  const apiKey = getOpenAIKey();
+  if (!apiKey) throw new functions.https.HttpsError('failed-precondition', 'AI är inte konfigurerad (saknar API-nyckel).');
+
+  const userPrompt = `Generell förfrågetext för projektet:
+---
+${inquiryDraftText}
+---
+
+Gör en personlig version av denna förfrågan till mottagaren: ${contactName || 'Kontakt'}${supplierCompanyName ? ` på ${supplierCompanyName}` : ''}. Börja med ett kort personligt tilltal (t.ex. "Hej ${contactName || 'du'},"). Behåll projektinformationen men anpassa inledningen. Språk: svenska. Output: endast e-posttexten.`;
+  const systemPrompt = 'Du är en assistent som anpassar förfrågningstexter till en specifik mottagare (kontaktperson och företag). Svara endast med e-posttexten.';
+  let text;
+  try {
+    text = await callOpenAIPlainText({ apiKey, system: systemPrompt, user: userPrompt });
+  } catch (e) {
+    console.error('generatePersonalizedInquiry failed', { message: String(e && e.message ? e.message : e), companyId, projectId });
+    throw new functions.https.HttpsError('internal', 'Kunde inte generera personlig förfrågan. Försök igen.');
+  }
+  return { text: text || '' };
+});
+
 // AI: Analyze FFU (förfrågningsunderlag)
 // Input: { companyId, projectId, files: [{id,name,type,extractedText}] }
 // Output: FFUAnalysisResult JSON (exact schema; no extra keys)
-async function analyzeFFUCore({ companyId, projectId, files, uid }) {
+async function analyzeFFUCore({ companyId, projectId, files, uid, customInstruction }) {
   const normalizedFiles = (files || []).map((f) => ({
     id: f && f.id != null ? String(f.id).trim() : '',
     name: f && f.name != null ? String(f.name).trim() : '',
@@ -292,9 +566,9 @@ async function analyzeFFUCore({ companyId, projectId, files, uid }) {
     throw new functions.https.HttpsError('invalid-argument', 'No extractedText found in any file');
   }
 
-  // Guardrails: keep prompt size bounded.
+  // Guardrails: keep prompt size bounded (gpt-4.1-mini 128k tokens ~ 500k chars).
   const totalChars = nonEmpty.reduce((sum, f) => sum + String(f.extractedText || '').length, 0);
-  const maxChars = Number(process.env.FFU_AI_MAX_CHARS || readFunctionsConfigValue('openai.max_chars', null) || 250_000);
+  const maxChars = Number(process.env.FFU_AI_MAX_CHARS || readFunctionsConfigValue('openai.max_chars', null) || 500_000);
   if (Number.isFinite(maxChars) && totalChars > maxChars) {
     throw new functions.https.HttpsError('invalid-argument', `Combined extractedText too large (${totalChars} chars). Reduce documents or split analysis.`);
   }
@@ -330,7 +604,7 @@ async function analyzeFFUCore({ companyId, projectId, files, uid }) {
     return emptyFFUAnalysisResult('AI-analys är inte konfigurerad (saknar API-nyckel).');
   }
 
-  const { system, user } = buildFFUPrompt({ companyId, projectId, files: normalizedFiles });
+  const { system, user } = buildFFUPrompt({ companyId, projectId, files: normalizedFiles, customInstruction });
 
   let analysis;
   try {
@@ -402,7 +676,17 @@ exports.analyzeFFU = functions.https.onCall(async (data, context) => {
   }
 
   assertAnalyzeFFUPermission({ companyId, context });
-  return analyzeFFUCore({ companyId, projectId, files, uid: context.auth.uid });
+
+  let customInstruction = '';
+  try {
+    const promptSnap = await db.doc(`companies/${companyId}/ai_prompts/ffu`).get().catch(() => null);
+    if (promptSnap && promptSnap.exists) {
+      const data = promptSnap.data() || {};
+      customInstruction = String(data.instruction || data.customInstruction || '').trim();
+    }
+  } catch (_e) {}
+
+  return analyzeFFUCore({ companyId, projectId, files, uid: context.auth.uid, customInstruction });
 });
 
 function parseGsPath(raw) {
@@ -681,14 +965,8 @@ async function graphListFilesRecursive({ siteId, rootPath, accessToken, maxDepth
   return out;
 }
 
-async function getProjectSharePointBasePath({ companyId, projectId }) {
-  const cid = String(companyId || '').trim();
-  const pid = String(projectId || '').trim();
-  if (!cid || !pid) return '';
-
-  const ref = db.doc(`foretag/${cid}/projects/${pid}`);
-  const snap = await ref.get().catch(() => null);
-  const p = snap && snap.exists ? (snap.data() || {}) : {};
+function readProjectPath(data) {
+  const p = data && typeof data === 'object' ? data : {};
   const base = String(
     p?.rootFolderPath ||
     p?.rootPath ||
@@ -701,6 +979,54 @@ async function getProjectSharePointBasePath({ companyId, projectId }) {
     ''
   ).trim();
   return base.replace(/^\/+/, '').replace(/\/+$/, '').trim();
+}
+
+function readProjectSiteId(data) {
+  const p = data && typeof data === 'object' ? data : {};
+  return (p?.sharePointSiteId || p?.sharePointSiteID || p?.siteId || p?.siteID || '').trim() || null;
+}
+
+/** Return { siteId, basePath } for the project. siteId = project's SharePoint site when set, else null (caller uses company site). */
+async function getProjectSharePointSiteAndPath({ companyId, projectId }) {
+  const cid = String(companyId || '').trim();
+  const pid = String(projectId || '').trim();
+  if (!cid || !pid) return { siteId: null, basePath: '' };
+
+  let data = null;
+  const refForetag = db.doc(`foretag/${cid}/projects/${pid}`);
+  const snapForetag = await refForetag.get().catch(() => null);
+  if (snapForetag?.exists) data = snapForetag.data();
+  if (!data) {
+    const snapCompanies = await db.doc(`companies/${cid}/projects/${pid}`).get().catch(() => null);
+    if (snapCompanies?.exists) data = snapCompanies.data();
+  }
+  let basePath = readProjectPath(data);
+  let siteId = readProjectSiteId(data);
+
+  if (!basePath && cid) {
+    const projectsRef = db.collection('foretag').doc(cid).collection('projects');
+    const byNumber = await projectsRef.where('projectNumber', '==', pid).limit(1).get().catch(() => null);
+    if (byNumber && !byNumber.empty) {
+      const first = byNumber.docs[0];
+      data = first.data();
+      basePath = readProjectPath(data);
+      siteId = readProjectSiteId(data);
+    }
+    if (!basePath) {
+      const byIdField = await projectsRef.where('projectId', '==', pid).limit(1).get().catch(() => null);
+      if (byIdField && !byIdField.empty) {
+        data = byIdField.docs[0].data();
+        basePath = readProjectPath(data);
+        siteId = readProjectSiteId(data);
+      }
+    }
+  }
+  return { siteId, basePath };
+}
+
+async function getProjectSharePointBasePath({ companyId, projectId }) {
+  const { basePath } = await getProjectSharePointSiteAndPath({ companyId, projectId });
+  return basePath;
 }
 
 async function downloadStorageObjectAsBuffer({ bucketName, objectPath }) {
@@ -745,12 +1071,15 @@ function truncateExtractedFilesToMaxChars(extractedFiles, maxTotalChars) {
     const remaining = maxChars - used;
     const sliced = text.length > remaining ? text.slice(0, remaining) : text;
     used += sliced.length;
-    out.push({
+    const entry = {
       id: f?.id != null ? String(f.id) : '',
       name: f?.name != null ? String(f.name) : '',
       type: f?.type != null ? String(f.type) : '',
       extractedText: sliced,
-    });
+    };
+    if (f?.sourcePath != null) entry.sourcePath = String(f.sourcePath);
+    if (f?.path != null) entry.path = String(f.path);
+    out.push(entry);
   }
 
   const originalTotal = input.reduce((sum, f) => sum + String(f?.extractedText || '').length, 0);
@@ -838,6 +1167,7 @@ function buildPersistedFFUAnalysisDoc({ status, analysis, meta, fallbackSummary,
 
   const safeSummary = summary || String(fallbackSummary || 'AI kunde inte skapa en sammanfattning, men analysen kördes.').trim();
   const m = String(model || '').trim();
+  const projectInfo = a && a.projectInfo && typeof a.projectInfo === 'object' ? a.projectInfo : emptyFFUProjectInfo();
 
   return {
     status: status || 'success',
@@ -848,6 +1178,7 @@ function buildPersistedFFUAnalysisDoc({ status, analysis, meta, fallbackSummary,
     },
     risks,
     questions,
+    projectInfo,
     meta: {
       totalChars: Number(meta?.totalChars) || 0,
       filesUsed: Number(meta?.filesUsed) || 0,
@@ -858,13 +1189,145 @@ function buildPersistedFFUAnalysisDoc({ status, analysis, meta, fallbackSummary,
   };
 }
 
-async function persistFFUAnalysisLatest({ companyId, projectId, doc }) {
+async function logAiAnalysisActivity({ companyId, projectId, kind, status, uid }) {
+  if (!uid) return;
+  try {
+    const projSnap = await db.doc(`foretag/${companyId}/projects/${projectId}`).get().catch(() => null);
+    const projData = projSnap && projSnap.exists ? projSnap.data() : null;
+    const projectName = String(projData?.name || projData?.projectName || '').trim() || projectId;
+    const label = kind === 'kalkyl' ? 'Kalkyl' : 'Förfrågningsunderlag';
+    const desc = status === 'error' ? `AI-analys (${label}) misslyckades` : `AI-analys (${label}) klar`;
+    const col = db.collection('foretag').doc(companyId).collection('activity');
+    await col.add({
+      type: 'AI-analys',
+      kind,
+      projectId,
+      projectName,
+      status: status || 'success',
+      desc,
+      uid,
+      ts: FieldValue.serverTimestamp(),
+      aiSection: kind === 'kalkyl' ? 'kalkyl' : 'forfragningsunderlag',
+      aiItem: kind === 'kalkyl' ? 'ai-kalkyl-analys' : 'ai-summary',
+    });
+    const notifCol = db.collection('foretag').doc(companyId).collection('projects').doc(projectId).collection('notifications');
+    await notifCol.add({
+      type: 'ai_analysis_complete',
+      userId: uid,
+      companyId,
+      projectId,
+      projectName,
+      kind,
+      status: status || 'success',
+      textPreview: desc,
+      authorName: 'DigitalKontroll',
+      createdAt: FieldValue.serverTimestamp(),
+      read: false,
+    });
+  } catch (e) {
+    console.warn('[AI Activity] Failed to log', String(e && e.message ? e.message : e));
+  }
+}
+
+async function updateFFUAnalysisProgress(companyId, projectId, { progress, progressStep }) {
   const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
   const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const payload = { progress: Math.max(0, Math.min(100, Number(progress) || 0)), progressStep: String(progressStep || '').trim() || null };
+  await canonicalRef.set(payload, { merge: true });
+  await legacyRef.set(payload, { merge: true }).catch(() => null);
+}
 
+async function checkFFUCancelRequested(companyId, projectId) {
+  const snap = await db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`).get();
+  const d = (snap && snap.exists && snap.data()) || {};
+  return d.cancelRequested === true;
+}
+
+async function updateKalkylAnalysisProgress(companyId, projectId, { progress, progressStep }) {
+  const ref = db.doc(`companies/${companyId}/projects/${projectId}/ai_kalkyl_analysis/latest`);
+  const payload = { progress: Math.max(0, Math.min(100, Number(progress) || 0)), progressStep: String(progressStep || '').trim() || null };
+  await ref.set(payload, { merge: true });
+}
+
+async function checkKalkylCancelRequested(companyId, projectId) {
+  const snap = await db.doc(`companies/${companyId}/projects/${projectId}/ai_kalkyl_analysis/latest`).get();
+  const d = (snap && snap.exists && snap.data()) || {};
+  return d.cancelRequested === true;
+}
+
+/** Sätt Kalkyl-analys till fel så att klienten slutar visa "Analyseras" vid tidiga fel. */
+async function setKalkylAnalysisError(companyId, projectId, errorMessage) {
+  const ref = db.doc(`companies/${companyId}/projects/${projectId}/ai_kalkyl_analysis/latest`);
+  await ref.set({ status: 'error', errorMessage: String(errorMessage || '').trim() || 'Analysen misslyckades.', analyzedAt: FieldValue.serverTimestamp() }, { merge: true });
+}
+
+/** Sätt FFU-analys till fel så att klienten slutar visa "Analyseras" vid tidiga fel (t.ex. saknad SharePoint base path). */
+async function setFFUAnalysisError(companyId, projectId, errorMessage) {
+  const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const payload = { status: 'error', errorMessage: String(errorMessage || '').trim() || 'Analysen misslyckades.', analyzedAt: FieldValue.serverTimestamp() };
+  await canonicalRef.set(payload, { merge: true });
+  await legacyRef.set(payload, { merge: true }).catch(() => null);
+}
+
+/** Build Firestore project patch from AI-extracted projectInfo. Only non-empty values to avoid overwriting with blanks. */
+function buildProjectPatchFromFFUProjectInfo(projectInfo) {
+  if (!projectInfo || typeof projectInfo !== 'object') return {};
+  const s = (v) => (v != null && String(v).trim() !== '' ? String(v).trim() : null);
+  const patch = {};
+  if (s(projectInfo.upphandlingsform)) patch.upphandlingsform = s(projectInfo.upphandlingsform);
+  if (s(projectInfo.entreprenadform)) patch.entreprenadform = s(projectInfo.entreprenadform);
+  if (s(projectInfo.customerCompany)) patch.kund = s(projectInfo.customerCompany);
+  if (s(projectInfo.customerOrganizationNumber)) patch.organisationsnummer = s(projectInfo.customerOrganizationNumber);
+  if (s(projectInfo.contactPerson)) patch.kontaktperson = { name: s(projectInfo.contactPerson) };
+  if (s(projectInfo.contactPhone)) patch.telefon = s(projectInfo.contactPhone);
+  if (s(projectInfo.contactEmail)) patch.epost = s(projectInfo.contactEmail);
+  if (s(projectInfo.addressStreet)) patch.adress = s(projectInfo.addressStreet);
+  if (s(projectInfo.addressCity)) patch.kommun = s(projectInfo.addressCity);
+  if (s(projectInfo.addressMunicipality)) patch.region = s(projectInfo.addressMunicipality);
+  if (s(projectInfo.fastighetsbeteckning)) patch.fastighetsbeteckning = s(projectInfo.fastighetsbeteckning);
+  if (s(projectInfo.lastQuestionDate)) {
+    patch.sistaDagForFragor = s(projectInfo.lastQuestionDate);
+    patch.lastQuestionDate = s(projectInfo.lastQuestionDate);
+  }
+  if (s(projectInfo.tenderSubmissionDate)) {
+    patch.anbudsinlamning = s(projectInfo.tenderSubmissionDate);
+    patch.tenderSubmissionDate = s(projectInfo.tenderSubmissionDate);
+  }
+  if (s(projectInfo.plannedConstructionStart)) {
+    patch.planeradByggstart = s(projectInfo.plannedConstructionStart);
+    patch.plannedConstructionStart = s(projectInfo.plannedConstructionStart);
+  }
+  if (s(projectInfo.readyForInspectionDate)) {
+    patch.klartForBesiktning = s(projectInfo.readyForInspectionDate);
+    patch.readyForInspectionDate = s(projectInfo.readyForInspectionDate);
+  }
+  return patch;
+}
+
+/** Apply AI-extracted projectInfo to the project document (Projektinformation). Only updates non-empty fields. */
+async function applyFFUProjectInfoToProject(companyId, projectId, projectInfo) {
+  const patch = buildProjectPatchFromFFUProjectInfo(projectInfo);
+  if (Object.keys(patch).length === 0) {
+    console.log('[FFU] Project info patch empty – AI returned no projectInfo or all fields empty', { companyId, projectId });
+    return;
+  }
+  const projectRef = db.doc(`foretag/${companyId}/projects/${projectId}`);
+  await projectRef.set({ ...patch, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  console.log('[FFU] Project info updated from AI analysis', { companyId, projectId, keys: Object.keys(patch) });
+}
+
+async function persistFFUAnalysisLatest({ companyId, projectId, doc, uid }) {
+  const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
   await canonicalRef.set(doc, { merge: false });
   // Mirror write for older clients/paths (best-effort).
   await legacyRef.set(doc, { merge: false }).catch(() => null);
+
+  const status = doc?.status || 'success';
+  if (status !== 'analyzing') {
+    await logAiAnalysisActivity({ companyId, projectId, kind: 'ffu', status, uid });
+  }
 
   const snap = await canonicalRef.get();
   return snap && snap.exists ? (snap.data() || {}) : (doc || {});
@@ -895,15 +1358,31 @@ exports.analyzeFFUFromFiles = functions
 
   assertAnalyzeFFUPermission({ companyId, context });
 
-  // Mark analysis as running in Firestore (merge to preserve any previous content).
+  const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
+
   try {
-    const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
-    const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
-    const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
-    await canonicalRef.set({ status: 'analyzing', model, analyzingAt: FieldValue.serverTimestamp() }, { merge: true });
-    await legacyRef.set({ status: 'analyzing', model, analyzingAt: FieldValue.serverTimestamp() }, { merge: true }).catch(() => null);
+    await canonicalRef.set({
+      status: 'analyzing',
+      model,
+      analyzingAt: FieldValue.serverTimestamp(),
+      progress: 0,
+      progressStep: 'Förbereder',
+      cancelRequested: FieldValue.delete(),
+    }, { merge: true });
+    await legacyRef.set({ status: 'analyzing', model, analyzingAt: FieldValue.serverTimestamp(), progress: 0, progressStep: 'Förbereder', cancelRequested: FieldValue.delete() }, { merge: true }).catch(() => null);
   } catch (e) {
     console.warn('[FFU] Failed to set analyzing status', { message: String(e && e.message ? e.message : e) });
+  }
+
+  async function maybeCancel() {
+    if (await checkFFUCancelRequested(companyId, projectId)) {
+      await canonicalRef.set({ status: 'cancelled', canceledAt: FieldValue.serverTimestamp() }, { merge: true });
+      await legacyRef.set({ status: 'cancelled', canceledAt: FieldValue.serverTimestamp() }, { merge: true }).catch(() => null);
+      return true;
+    }
+    return false;
   }
 
   // Debug (temporary): verify what SharePoint config is visible in runtime.
@@ -920,8 +1399,11 @@ exports.analyzeFFUFromFiles = functions
     });
   } catch (_e) {}
 
+  try {
   const hasClientFiles = Array.isArray(files) && files.length > 0;
   const useSharePoint = !hasClientFiles;
+
+  if (await maybeCancel()) return { status: 'cancelled' };
 
   if (!useSharePoint && IS_EMULATOR && !isStorageEmulated()) {
     throw new functions.https.HttpsError(
@@ -938,6 +1420,8 @@ exports.analyzeFFUFromFiles = functions
     if (!seed.ok) {
       throw new functions.https.HttpsError('failed-precondition', `SharePoint site config missing for company ${companyId}: ${seed.reason || 'unknown'}`);
     }
+    await updateFFUAnalysisProgress(companyId, projectId, { progress: 5, progressStep: 'Konfigurerar SharePoint' });
+    if (await maybeCancel()) return { status: 'cancelled' };
 
     let accessToken = null;
     try {
@@ -948,16 +1432,19 @@ exports.analyzeFFUFromFiles = functions
         `SharePoint Graph access token is not configured (or could not be minted): ${String(e && e.message ? e.message : e)}`
       );
     }
+    await updateFFUAnalysisProgress(companyId, projectId, { progress: 8, progressStep: 'Ansluter till SharePoint' });
+    if (await maybeCancel()) return { status: 'cancelled' };
 
-    const siteId = seed.siteId || await resolveCompanyWorkspaceSiteId(companyId);
-    if (!siteId) {
-      throw new functions.https.HttpsError('failed-precondition', `Missing SharePoint workspace siteId for company ${companyId}`);
-    }
-
-    const basePath = await getProjectSharePointBasePath({ companyId, projectId });
+    const { siteId: projectSiteId, basePath } = await getProjectSharePointSiteAndPath({ companyId, projectId });
     if (!basePath) {
       throw new functions.https.HttpsError('failed-precondition', `Project ${projectId} is missing SharePoint base path`);
     }
+    const siteId = projectSiteId || seed.siteId || await resolveCompanyWorkspaceSiteId(companyId);
+    if (!siteId) {
+      throw new functions.https.HttpsError('failed-precondition', `Missing SharePoint workspace siteId for company ${companyId}`);
+    }
+    await updateFFUAnalysisProgress(companyId, projectId, { progress: 10, progressStep: 'Hämtar mappstruktur' });
+    if (await maybeCancel()) return { status: 'cancelled' };
 
     const FORFRAGNINGSUNDERLAG_FOLDER = '02 - Förfrågningsunderlag';
     const ffuRootPath = `${basePath}/${FORFRAGNINGSUNDERLAG_FOLDER}`.replace(/^\/+/, '').replace(/\/+/, '/');
@@ -965,6 +1452,9 @@ exports.analyzeFFUFromFiles = functions
     const maxFiles = Number(process.env.FFU_SP_MAX_FILES || 10);
     const maxDepth = Number(process.env.FFU_SP_MAX_DEPTH || 8);
     const spFiles = await graphListFilesRecursive({ siteId, rootPath: ffuRootPath, accessToken, maxDepth, maxFiles });
+
+    await updateFFUAnalysisProgress(companyId, projectId, { progress: 15, progressStep: 'Listar filer i SharePoint' });
+    if (await maybeCancel()) return { status: 'cancelled' };
 
     console.log('analyzeFFUFromFiles: sharepoint list summary', {
       companyId,
@@ -982,7 +1472,13 @@ exports.analyzeFFUFromFiles = functions
     }
 
     const maxBytes = Number(process.env.FFU_EXTRACT_MAX_BYTES || 20 * 1024 * 1024);
-    for (let i = 0; i < spFiles.length; i += 1) {
+    const spLen = spFiles.length;
+    for (let i = 0; i < spLen; i += 1) {
+      if (i % 2 === 0) {
+        const p = 15 + Math.round(35 * (i + 1) / spLen);
+        await updateFFUAnalysisProgress(companyId, projectId, { progress: p, progressStep: 'Läser underlag' });
+        if (i % 4 === 2 && (await maybeCancel())) return { status: 'cancelled' };
+      }
       const f = spFiles[i] || {};
       const name = String(f.name || '').trim();
       const mimeType = guessMimeTypeFromName(name);
@@ -1084,9 +1580,13 @@ exports.analyzeFFUFromFiles = functions
 
   console.log('[FFU] Step 2: PDF extraction done', { ms: Date.now() - startedAtMs, totalChars });
 
-  const defaultCap = 120_000;
+  await updateFFUAnalysisProgress(companyId, projectId, { progress: 50, progressStep: 'Förbereder text till AI' });
+  if (await maybeCancel()) return { status: 'cancelled' };
+
+  // gpt-4.1-mini has 128k token context (~500k chars). Default 400k so large FFUs are analyzed in full.
+  const defaultCap = 400_000;
   const capFromEnv = Number(process.env.FFU_MAX_TOTAL_CHARS || defaultCap);
-  const coreCap = Number(process.env.FFU_AI_MAX_CHARS || readFunctionsConfigValue('openai.max_chars', null) || 250_000);
+  const coreCap = Number(process.env.FFU_AI_MAX_CHARS || readFunctionsConfigValue('openai.max_chars', null) || 500_000);
   const maxTotalChars = Number.isFinite(coreCap)
     ? Math.min(Number.isFinite(capFromEnv) ? capFromEnv : defaultCap, coreCap)
     : (Number.isFinite(capFromEnv) ? capFromEnv : defaultCap);
@@ -1103,12 +1603,23 @@ exports.analyzeFFUFromFiles = functions
     });
   }
 
-  const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
   console.log('[FFU] Step 3: Calling OpenAI', { ms: Date.now() - startedAtMs, model, status });
+
+  let customInstruction = '';
+  try {
+    const promptSnap = await db.doc(`companies/${companyId}/ai_prompts/ffu`).get().catch(() => null);
+    if (promptSnap && promptSnap.exists) {
+      const data = promptSnap.data() || {};
+      customInstruction = String(data.instruction || data.customInstruction || '').trim();
+    }
+  } catch (_e) {}
+
+  await updateFFUAnalysisProgress(companyId, projectId, { progress: 55, progressStep: 'Anropar AI (kan ta 1–2 min)' });
+  if (await maybeCancel()) return { status: 'cancelled' };
 
   let analysis;
   try {
-    analysis = await analyzeFFUCore({ companyId, projectId, files: trunc.files, uid: context.auth.uid });
+    analysis = await analyzeFFUCore({ companyId, projectId, files: trunc.files, uid: context.auth.uid, customInstruction });
   } catch (e) {
     const msg = String(e && e.message ? e.message : e);
     console.error('[FFU] analyzeFFUCore failed', { message: msg, companyId, projectId });
@@ -1143,7 +1654,7 @@ exports.analyzeFFUFromFiles = functions
         }
       : fallbackDoc;
 
-    const saved = await persistFFUAnalysisLatest({ companyId, projectId, doc: docToSave });
+    const saved = await persistFFUAnalysisLatest({ companyId, projectId, doc: docToSave, uid: context.auth?.uid });
     console.log('[FFU] Analysis saved', { companyId, projectId, status: 'error' });
     return saved;
   }
@@ -1156,10 +1667,303 @@ exports.analyzeFFUFromFiles = functions
     meta: { totalChars, filesUsed: trunc.filesUsed, truncated: trunc.truncated },
     model,
   });
-  const saved = await persistFFUAnalysisLatest({ companyId, projectId, doc: docToSave });
+  const saved = await persistFFUAnalysisLatest({ companyId, projectId, doc: docToSave, uid: context.auth?.uid });
   console.log('[FFU] Analysis saved', { companyId, projectId, status });
+  if (status === 'success' && analysis && analysis.projectInfo && typeof analysis.projectInfo === 'object') {
+    try {
+      await applyFFUProjectInfoToProject(companyId, projectId, analysis.projectInfo);
+    } catch (e) {
+      console.warn('[FFU] Failed to apply projectInfo to project (non-fatal)', String(e && e.message ? e.message : e));
+    }
+  }
   return saved;
+  } catch (e) {
+    const msg = (e && (e.message || (e.details != null ? String(e.details) : ''))) ? String(e.message || e.details) : String(e);
+    await setFFUAnalysisError(companyId, projectId, msg).catch(() => null);
+    throw e;
+  }
 });
+
+// --- AI: Kalkyl analysis from SharePoint ---
+// Lists and extracts from: FFU, Inköp/offerter, Risk, Möten, Kalkyl (all subfolders).
+// Verifies that fliken "Kalkyl" (03 - Kalkyl) contains everything expected.
+const KALKYL_ANALYSIS_FOLDERS_V2 = [
+  '02 - Förfrågningsunderlag',
+  '03 - Inköp och offerter',
+  '06 - Risk och möjligheter',
+  '08 - Möten',
+  '09 - Kalkyl',
+];
+
+function buildKalkylAnalysisPrompt(files) {
+  const grouped = (files || []).reduce((acc, f) => {
+    const path = String(f.sourcePath || f.path || '').trim();
+    const folder = path ? path.split('/').pop() || 'överig' : 'överig';
+    if (!acc[folder]) acc[folder] = [];
+    acc[folder].push({
+      name: f.name || '',
+      path: path,
+      extractedText: String(f.extractedText || '').slice(0, 60000),
+    });
+    return acc;
+  }, {});
+
+  const blocks = Object.entries(grouped).map(([folder, items]) => {
+    const texts = items.map((i) => `[Fil: ${i.name}] (${i.path})\n${i.extractedText}`).join('\n\n---\n\n');
+    return `## ${folder}\n${texts}`;
+  });
+
+  const userContent = blocks.length > 0 ? blocks.join('\n\n') : '(Inget extraherat innehåll)';
+
+  const system = `Du är en expert på kalkylhantering i byggprojekt. Din uppgift är att analysera projektets underlag och kalkyl.
+
+Du får dokument från följande SharePoint-sektioner:
+- 02 - Förfrågningsunderlag (inkl. alla undermappar)
+- 03 - Inköp och offerter (inkl. alla undermappar)
+- 06 - Risk och möjligheter (inkl. alla undermappar)
+- 08 - Möten (inkl. alla undermappar)
+- 09 - Kalkyl (inkl. Kalkylritningar, Kalkylanteckningar, Kalkyl)
+
+Analysera:
+1. Vad som framgår av förfrågningsunderlaget (krav, specifikationer, upphandlingsvillkor).
+2. Inköp och offerter – vilka offerter finns, vilka belopp, leverantörer.
+3. Risk och möjligheter – identifierade risker, möjligheter, åtgärder.
+4. Möten – relevanta beslut, anteckningar som påverkar kalkylen.
+5. Kalkyl – innehållet i Kalkylritningar, Kalkylanteckningar och särskilt fliken "03 - Kalkyl".
+
+Verifiera att fliken "03 - Kalkyl" (eller motsvarande Kalkyl-mapp) innehåller allt som bör ligga i en komplett kalkyl:
+- Nettokalkyl (byggkostnader)
+- Offertepris/kostnadsöversikt
+- Omkostnader (t.ex. projekthantering, kontroll, säkerhet)
+- Slutsida/sammanfattning
+- Eventuella justeringar, risk- eller möjlighetsbelopp
+
+Svara ENDAST med ett giltigt JSON-objekt (inga markdown-filer, inga \`\`\`). Format:
+{
+  "summary": "Kort sammanfattning av analysen på 2–4 meningar.",
+  "gaps": ["Saknas: X", "Saknas: Y"],
+  "recommendations": ["Rekommendation 1", "Rekommendation 2"],
+  "completenessNote": "Beskrivning av om fliken Kalkyl verkar komplett eller vilka delar som fattas.",
+  "sectionsAnalyzed": "Förfrågningsunderlag, Inköp och offerter, Risk och möjligheter, Möten, Kalkyl (Kalkylritningar, Kalkylanteckningar, Kalkyl)"
+}`;
+
+  const user = `Analysera följande projektunderlag och ge analysen i det begärda JSON-formatet:\n\n${userContent}`;
+  return { system, user };
+}
+
+function normalizeKalkylAnalysisResult(parsed) {
+  const p = parsed && typeof parsed === 'object' ? parsed : {};
+  return {
+    summary: typeof p.summary === 'string' ? p.summary : '',
+    gaps: Array.isArray(p.gaps) ? p.gaps.map((g) => String(g || '').trim()).filter(Boolean) : [],
+    recommendations: Array.isArray(p.recommendations) ? p.recommendations.map((r) => String(r || '').trim()).filter(Boolean) : [],
+    completenessNote: typeof p.completenessNote === 'string' ? p.completenessNote : '',
+    sectionsAnalyzed: typeof p.sectionsAnalyzed === 'string' ? p.sectionsAnalyzed : '',
+  };
+}
+
+exports.analyzeKalkylFromSharePoint = functions
+  .runWith({
+    timeoutSeconds: 540,
+    memory: '2GB',
+  })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+    }
+
+    const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
+    const projectId = (data && data.projectId) ? String(data.projectId).trim() : '';
+    if (!companyId || !projectId) {
+      throw new functions.https.HttpsError('invalid-argument', 'companyId and projectId are required');
+    }
+
+    assertAnalyzeFFUPermission({ companyId, context });
+
+    const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_kalkyl_analysis/latest`);
+    try {
+      await canonicalRef.set({
+        status: 'analyzing',
+        analyzingAt: FieldValue.serverTimestamp(),
+        progress: 0,
+        progressStep: 'Förbereder',
+        cancelRequested: FieldValue.delete(),
+      }, { merge: true });
+    } catch (e) {
+      console.warn('[Kalkyl AI] Failed to set analyzing status', String(e && e.message ? e.message : e));
+    }
+
+    async function maybeCancelKalkyl() {
+      if (await checkKalkylCancelRequested(companyId, projectId)) {
+        await canonicalRef.set({ status: 'cancelled', canceledAt: FieldValue.serverTimestamp() }, { merge: true });
+        return true;
+      }
+      return false;
+    }
+
+    try {
+    if (await maybeCancelKalkyl()) return { status: 'cancelled' };
+
+    const seed = await ensureCompany5555SharePointSeedIfMissing(companyId);
+    if (!seed.ok) {
+      throw new functions.https.HttpsError('failed-precondition', `SharePoint site config missing for company ${companyId}: ${seed.reason || 'unknown'}`);
+    }
+    await updateKalkylAnalysisProgress(companyId, projectId, { progress: 10, progressStep: 'Konfigurerar SharePoint' });
+    if (await maybeCancelKalkyl()) return { status: 'cancelled' };
+
+    let accessToken;
+    try {
+      accessToken = await getSharePointGraphAccessToken();
+    } catch (e) {
+      throw new functions.https.HttpsError('failed-precondition', `SharePoint Graph access token not configured: ${String(e && e.message ? e.message : e)}`);
+    }
+    await updateKalkylAnalysisProgress(companyId, projectId, { progress: 15, progressStep: 'Ansluter till SharePoint' });
+    if (await maybeCancelKalkyl()) return { status: 'cancelled' };
+
+    const { siteId: projectSiteId, basePath } = await getProjectSharePointSiteAndPath({ companyId, projectId });
+    if (!basePath) {
+      throw new functions.https.HttpsError('failed-precondition', `Project ${projectId} is missing SharePoint base path`);
+    }
+    const siteId = projectSiteId || seed.siteId || await resolveCompanyWorkspaceSiteId(companyId);
+    if (!siteId) {
+      throw new functions.https.HttpsError('failed-precondition', `Missing SharePoint workspace siteId for company ${companyId}`);
+    }
+    await updateKalkylAnalysisProgress(companyId, projectId, { progress: 20, progressStep: 'Hämtar mappstruktur' });
+    if (await maybeCancelKalkyl()) return { status: 'cancelled' };
+
+    const maxFilesPerFolder = Number(process.env.KALKYL_AI_MAX_FILES_PER_FOLDER || 40);
+    const maxDepth = Number(process.env.KALKYL_AI_MAX_DEPTH || 8);
+    const seenIds = new Set();
+    const allSpFiles = [];
+
+    const folderList = KALKYL_ANALYSIS_FOLDERS_V2;
+    for (let fi = 0; fi < folderList.length; fi += 1) {
+      const folder = folderList[fi];
+      const rootPath = `${basePath}/${folder}`.replace(/^\/+/, '').replace(/\/+/g, '/');
+      const files = await graphListFilesRecursive({ siteId, rootPath, accessToken, maxDepth, maxFiles: maxFilesPerFolder });
+      for (const f of files || []) {
+        if (f && f.id && !seenIds.has(f.id)) {
+          seenIds.add(f.id);
+          allSpFiles.push({ ...f, sourcePath: rootPath });
+        }
+      }
+      const listP = 20 + Math.round(30 * (fi + 1) / folderList.length);
+      await updateKalkylAnalysisProgress(companyId, projectId, { progress: listP, progressStep: 'Listar filer' });
+      if (await maybeCancelKalkyl()) return { status: 'cancelled' };
+    }
+
+    if (allSpFiles.length === 0) {
+      throw new functions.https.HttpsError('failed-precondition', 'Inga filer hittades i de konfigurerade mapparna (Förfrågningsunderlag, Inköp och offerter, Risk och möjligheter, Möten, Kalkyl).');
+    }
+
+    await updateKalkylAnalysisProgress(companyId, projectId, { progress: 50, progressStep: 'Läser underlag' });
+    if (await maybeCancelKalkyl()) return { status: 'cancelled' };
+
+    const minChars = Number(process.env.FFU_EXTRACT_MIN_CHARS || 30);
+    const maxBytes = Number(process.env.FFU_EXTRACT_MAX_BYTES || 20 * 1024 * 1024);
+    const extractedFiles = [];
+    const totalSp = allSpFiles.length;
+
+    for (let i = 0; i < allSpFiles.length; i += 1) {
+      if (i % 3 === 0 && totalSp > 0) {
+        const p = 50 + Math.round(30 * (i + 1) / totalSp);
+        await updateKalkylAnalysisProgress(companyId, projectId, { progress: p, progressStep: 'Läser underlag' });
+        if (i % 6 === 3 && (await maybeCancelKalkyl())) return { status: 'cancelled' };
+      }
+      const f = allSpFiles[i] || {};
+      const name = String(f.name || '').trim();
+      const mimeType = guessMimeTypeFromName(name);
+      if (!mimeType) continue;
+      try {
+        const { buffer } = await graphDownloadItemAsBuffer({ siteId, itemId: f.id, accessToken, maxBytes });
+        const { text } = await extractTextByMimeType({ mimeType, buffer });
+        if (!text || String(text).trim().length < minChars) continue;
+        extractedFiles.push({
+          id: `sp-${String(f.id).slice(0, 16)}`,
+          name,
+          sourcePath: f.sourcePath || f.path || '',
+          extractedText: text,
+        });
+      } catch (e) {
+        console.warn('[Kalkyl AI] Failed to extract file', { index: i, name, message: String(e && e.message ? e.message : e) });
+      }
+    }
+
+    if (extractedFiles.length === 0) {
+      throw new functions.https.HttpsError('failed-precondition', 'Ingen text kunde extraheras från filerna. Kontrollera att det finns PDF, Word eller Excel-filer med läsbart innehåll.');
+    }
+
+    const totalChars = extractedFiles.reduce((sum, f) => sum + String(f.extractedText || '').length, 0);
+    const maxTotalChars = Number(
+      process.env.KALKYL_AI_MAX_TOTAL_CHARS ||
+      process.env.FFU_MAX_TOTAL_CHARS ||
+      400_000
+    );
+    const trunc = truncateExtractedFilesToMaxChars(extractedFiles, maxTotalChars);
+    const status = trunc.truncated ? 'partial' : 'success';
+    const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
+
+    await updateKalkylAnalysisProgress(companyId, projectId, { progress: 85, progressStep: 'Anropar AI (kan ta 1–2 min)' });
+    if (await maybeCancelKalkyl()) return { status: 'cancelled' };
+
+    const { system, user } = buildKalkylAnalysisPrompt(trunc.files);
+    const apiKey = getOpenAIKey();
+    if (!apiKey) {
+      const fallback = {
+        status: 'error',
+        summary: '',
+        gaps: [],
+        recommendations: [],
+        completenessNote: 'AI-analys är inte konfigurerad (saknar API-nyckel).',
+        sectionsAnalyzed: '',
+        meta: { totalChars, filesUsed: trunc.filesUsed, truncated: trunc.truncated },
+        model: '',
+        analyzedAt: FieldValue.serverTimestamp(),
+      };
+      await canonicalRef.set(fallback, { merge: true });
+      await logAiAnalysisActivity({ companyId, projectId, kind: 'kalkyl', status: 'error', uid: context.auth?.uid });
+      return fallback;
+    }
+
+    let analysis;
+    try {
+      const output = await callOpenAIForFFUAnalysis({ apiKey, system, user });
+      const parsed = JSON.parse(output);
+      analysis = normalizeKalkylAnalysisResult(parsed);
+    } catch (e) {
+      console.error('[Kalkyl AI] OpenAI failed', { message: String(e && e.message ? e.message : e), companyId, projectId });
+      const fallback = {
+        status: 'error',
+        summary: '',
+        gaps: [],
+        recommendations: [],
+        completenessNote: 'Kunde inte generera analys. Försök igen eller kontrollera underlaget.',
+        sectionsAnalyzed: '',
+        meta: { totalChars, filesUsed: trunc.filesUsed, truncated: trunc.truncated },
+        model,
+        analyzedAt: FieldValue.serverTimestamp(),
+      };
+      await canonicalRef.set(fallback, { merge: true });
+      await logAiAnalysisActivity({ companyId, projectId, kind: 'kalkyl', status: 'error', uid: context.auth?.uid });
+      return fallback;
+    }
+
+    const doc = {
+      status,
+      ...analysis,
+      meta: { totalChars, filesUsed: trunc.filesUsed, truncated: trunc.truncated },
+      model,
+      analyzedAt: FieldValue.serverTimestamp(),
+    };
+    await canonicalRef.set(doc, { merge: true });
+    await logAiAnalysisActivity({ companyId, projectId, kind: 'kalkyl', status, uid: context.auth?.uid });
+    return doc;
+    } catch (e) {
+      const msg = (e && (e.message || (e.details != null ? String(e.details) : ''))) ? String(e.message || e.details) : String(e);
+      await setKalkylAnalysisError(companyId, projectId, msg).catch(() => null);
+      throw e;
+    }
+  });
 
 function encodeGraphPath(path) {
   const clean = String(path || '')
@@ -1324,6 +2128,7 @@ async function purgeCompanyFirestore(companyId) {
     `foretag/${companyId}/hierarki`,
     `foretag/${companyId}/mallar`,
     `foretag/${companyId}/byggdel_mallar`,
+    `foretag/${companyId}/byggdelar`,
     `foretag/${companyId}/byggdel_hierarki`,
     `foretag/${companyId}/sharepoint_sites`,
     `foretag/${companyId}/sharepoint_navigation`,

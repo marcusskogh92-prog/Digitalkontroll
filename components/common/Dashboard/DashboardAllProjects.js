@@ -8,10 +8,13 @@ import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native
 import { subscribeCompanyProjectOrganisation, subscribeCompanyProjects } from '../../../components/firebase';
 import { getPhaseConfig } from '../../../features/projects/constants';
 import DashboardBanner from './DashboardBanner';
+import StageOverviewCards from './StageOverviewCards';
 import { resolveProjectId } from './dashboardUtils';
 
 const DashboardAllProjects = ({
   hierarchy = [],
+  /** Aktiva moduler för företaget – endast dessa skede-kort visas. */
+  enabledPhaseKeys,
   onProjectSelect,
   formatRelativeTime,
   companyName,
@@ -19,6 +22,8 @@ const DashboardAllProjects = ({
   dashboardLoading = false,
   companyId = null,
   currentUserId = null,
+  /** Användarens e-post – används för att matcha kontaktmedlemmar (som har refId = kontakt-id, inte uid). */
+  currentUserEmail = null,
   authClaims = null,
 }) => {
   const DEBUG_MEMBERSHIP = !!(__DEV__ && Platform?.OS === 'web');
@@ -93,9 +98,10 @@ const DashboardAllProjects = ({
   useEffect(() => {
     const cid = String(effectiveCompanyId || '').trim();
     const uid = String(currentUserId || '').trim();
+    const userEmail = String(currentUserEmail || '').trim().toLowerCase();
 
     if (DEBUG_MEMBERSHIP) {
-      console.log('[dashboardAllProjects][membership] subscribe start', { cid, uid, isAdmin });
+      console.log('[dashboardAllProjects][membership] subscribe start', { cid, uid, isAdmin, hasEmail: !!userEmail });
     }
 
     if (!cid || !uid) {
@@ -103,6 +109,8 @@ const DashboardAllProjects = ({
       setMemberProjectsReady(false);
       return;
     }
+
+    const normEmail = (e) => String(e || '').trim().toLowerCase().replace(/\s+/g, '');
 
     setMemberProjectsReady(false);
     const unsub = subscribeCompanyProjectOrganisation(
@@ -157,6 +165,8 @@ const DashboardAllProjects = ({
 
               for (const m of members) {
                 const refId = String(m?.refId || m?.uid || m?.userId || '').trim();
+                const matchByUid = refId && refId === uid;
+                const matchByEmail = userEmail && String(m?.source || '').trim() === 'contact' && normEmail(m?.email) === userEmail;
                 if (DEBUG_MEMBERSHIP) {
                   compareCount += 1;
                   if (compareCount <= 500) {
@@ -166,14 +176,14 @@ const DashboardAllProjects = ({
                       memberSource: m?.source,
                       memberRole: m?.role,
                       memberName: m?.name,
-                      match: !!(refId && refId === uid),
+                      matchByUid: !!matchByUid,
+                      matchByEmail: !!matchByEmail,
                     });
                   } else if (compareCount === 501) {
                     console.log('[dashboardAllProjects][membership] compare member: too many comparisons, truncating logs after 500');
                   }
                 }
-                if (!refId) continue;
-                if (refId === uid) {
+                if (matchByUid || matchByEmail) {
                   isMember = true;
                   break;
                 }
@@ -183,6 +193,7 @@ const DashboardAllProjects = ({
 
             if (isMember) {
               const pid = String(d?.projectId || d?.id || '').trim();
+              const pnum = String(d?.projectNumber || '').trim();
               if (DEBUG_MEMBERSHIP) {
                 console.log('[dashboardAllProjects][membership] member match => allow project', {
                   docId: d?.id,
@@ -192,6 +203,7 @@ const DashboardAllProjects = ({
                 });
               }
               if (pid) next.add(pid);
+              if (pnum && pnum !== pid) next.add(pnum);
             }
           }
         } catch (_e) {}
@@ -209,7 +221,7 @@ const DashboardAllProjects = ({
     );
 
     return () => { try { unsub?.(); } catch(_e) {} };
-  }, [effectiveCompanyId, currentUserId, DEBUG_MEMBERSHIP, isAdmin]);
+  }, [effectiveCompanyId, currentUserId, currentUserEmail, DEBUG_MEMBERSHIP, isAdmin]);
 
   // Extract all projects from hierarchy (no phase filtering here anymore)
   const allProjects = useMemo(() => {
@@ -285,9 +297,25 @@ const DashboardAllProjects = ({
     const allowed = memberProjectIds;
     return (allProjects || []).filter((p) => {
       const pid = resolveProjectId(p);
-      return pid && allowed.has(pid);
+      const pnum = String(p?.projectNumber || p?.number || '').trim();
+      return (pid && allowed.has(pid)) || (pnum && allowed.has(pnum));
     });
   }, [allProjects, isAdmin, memberProjectsReady, memberProjectIds]);
+
+  const [stageFilter, setStageFilter] = useState(null);
+
+  const visibleProjectsFiltered = useMemo(() => {
+    if (!stageFilter) return visibleProjects;
+    return (visibleProjects || []).filter((p) => {
+      const phase = String(p?.phase || 'kalkylskede').trim().toLowerCase();
+      const key = phase === 'free' ? 'kalkylskede' : phase;
+      return key === stageFilter;
+    });
+  }, [visibleProjects, stageFilter]);
+
+  const handleStageFilter = (key) => {
+    setStageFilter(key);
+  };
 
   const tableHeaderStyle = useMemo(() => ({
     flexDirection: 'row',
@@ -338,47 +366,15 @@ const DashboardAllProjects = ({
 
   return (
     <>
-      {/* Header with title and create button */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        {/* Title removed - no company name or phase name needed */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          {visibleProjects.length > 0 && (
-            <Text style={{ fontSize: 14, color: '#888' }}>
-              {visibleProjects.length} {visibleProjects.length === 1 ? 'projekt' : 'projekt'}
-            </Text>
-          )}
-          {onCreateProject && (
-            <TouchableOpacity
-              onPress={onCreateProject}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: '#1976D2',
-                paddingVertical: 10,
-                paddingHorizontal: 16,
-                borderRadius: 8,
-                gap: 6,
-                ...(Platform.OS === 'web' ? {
-                  cursor: 'pointer',
-                  transition: 'background-color 0.2s',
-                } : {}),
-              }}
-              activeOpacity={0.8}
-              onMouseEnter={Platform.OS === 'web' ? (e) => {
-                e.currentTarget.style.backgroundColor = '#1565C0';
-              } : undefined}
-              onMouseLeave={Platform.OS === 'web' ? (e) => {
-                e.currentTarget.style.backgroundColor = '#1976D2';
-              } : undefined}
-            >
-              <Ionicons name="add" size={18} color="#fff" />
-              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
-                Skapa nytt projekt
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
+      {/* 4 skede-boxar högst upp – klick filtrerar projektlistan (visas alltid när data laddat) */}
+      {!membershipLoading && !projectsLoading && (companyProjectsReady || isAdmin) && (
+        <StageOverviewCards
+          projects={visibleProjects}
+          activeStageFilter={stageFilter}
+          onStageFilter={handleStageFilter}
+          enabledPhaseKeys={enabledPhaseKeys}
+        />
+      )}
 
       {/* Contextual guidance text */}
       {membershipLoading ? (
@@ -409,12 +405,19 @@ const DashboardAllProjects = ({
           title="Du har inte blivit tilldelad något projekt än"
           message="Kontakta din administratör för att bli tilldelad ett projekt i Organisation och roller."
         />
-      ) : visibleProjects.length === 0 ? (
+      ) : visibleProjectsFiltered.length === 0 && !stageFilter ? (
         <DashboardBanner
           padding={16}
           accentColor="#1976D2"
           title="Inga av dina projekt hittades"
           message="Du är tilldelad projekt, men inga matchade i projektregistret. Kontrollera att projekten finns registrerade och att projektnumret (t.ex. 1010-10) är korrekt."
+        />
+      ) : visibleProjectsFiltered.length === 0 && stageFilter ? (
+        <DashboardBanner
+          padding={16}
+          accentColor="#64748B"
+          title="Inga projekt i detta skede"
+          message="Klicka på en annan skede-box ovanför för att visa projekt, eller klicka på samma box igen för att ta bort filter."
         />
       ) : visibleProjects.length === 1 && projectSummary ? (
         <DashboardBanner padding={12} accentColor="#43A047" title={null} message={null}>
@@ -425,13 +428,7 @@ const DashboardAllProjects = ({
             ) : null}
           </Text>
         </DashboardBanner>
-      ) : (
-        <DashboardBanner padding={12} accentColor="#1976D2" title={null} message={null}>
-          <Text style={{ fontSize: 13, color: '#495057' }}>
-            Välj ett projekt i listan för att fortsätta
-          </Text>
-        </DashboardBanner>
-      )}
+      ) : null}
       
       {membershipLoading ? (
         <View style={{ 
@@ -499,7 +496,13 @@ const DashboardAllProjects = ({
             Kontakta din administratör för att bli tilldelad ett projekt i Organisation och roller.
           </Text>
         </View>
-      ) : visibleProjects.length === 0 ? (
+      ) : visibleProjectsFiltered.length === 0 && stageFilter ? (
+        <View style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, padding: 24, backgroundColor: '#f8fafc', alignItems: 'center' }}>
+          <Text style={{ color: '#64748b', fontSize: 14, textAlign: 'center' }}>
+            Inga projekt i detta skede. Klicka på en skede-box ovanför för att byta eller ta bort filter.
+          </Text>
+        </View>
+      ) : visibleProjectsFiltered.length === 0 ? (
         <View style={{ 
           borderWidth: 1, 
           borderColor: '#e0e0e0', 
@@ -542,7 +545,7 @@ const DashboardAllProjects = ({
 
           {/* Table Rows */}
           <ScrollView style={{ maxHeight: Platform.OS === 'web' ? 600 : 400 }}>
-            {visibleProjects.map((project, idx) => {
+            {visibleProjectsFiltered.map((project, idx) => {
               const projectPhase = project?.phase || 'kalkylskede';
               const phaseConfig = getPhaseConfig(projectPhase);
               const lastUpdated = project.updatedAt || project.createdAt || null;
@@ -656,7 +659,7 @@ const DashboardAllProjects = ({
                       paddingVertical: 12,
                       paddingLeft: 18,
                       paddingRight: 12,
-                      borderBottomWidth: idx === visibleProjects.length - 1 ? 0 : 1,
+                      borderBottomWidth: idx === visibleProjectsFiltered.length - 1 ? 0 : 1,
                       borderBottomStyle: 'solid',
                       borderBottomColor: '#f0f0f0',
                       backgroundColor: '#fff',
@@ -702,7 +705,7 @@ const DashboardAllProjects = ({
                   }}
                   style={[
                     tableRowStyle,
-                    idx === visibleProjects.length - 1 && { borderBottomWidth: 0 },
+                    idx === visibleProjectsFiltered.length - 1 && { borderBottomWidth: 0 },
                     Platform.OS === 'web' && {
                       ':hover': { backgroundColor: '#E3F2FD' },
                     },

@@ -1,7 +1,32 @@
 
 import { registerRootComponent } from 'expo';
 import { Platform } from 'react-native';
-import 'react-native-reanimated';
+
+// Reanimated kan ge vit skärm på web vid start – ladda endast på native
+if (Platform.OS !== 'web') {
+  require('react-native-reanimated');
+}
+
+// Webb: sätt root-höjd direkt så att appen inte blir vit (innan React monteras)
+if (Platform.OS === 'web' && typeof document !== 'undefined') {
+  try {
+    const html = document.documentElement;
+    if (html && html.style) {
+      html.style.height = '100%';
+      html.style.minHeight = '100vh';
+    }
+    if (document.body) {
+      document.body.style.height = '100%';
+      document.body.style.minHeight = '100vh';
+      document.body.style.margin = '0';
+    }
+    const root = document.getElementById('root');
+    if (root && root.style) {
+      root.style.minHeight = '100vh';
+      root.style.height = '100%';
+    }
+  } catch (_e) {}
+}
 
 import App from './App';
 

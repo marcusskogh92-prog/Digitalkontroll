@@ -9,6 +9,8 @@ import DashboardAllProjects from './DashboardAllProjects';
 
 const Dashboard = ({
   authClaims,
+  /** Aktiva moduler för företaget – endast dessa fas-kort visas på dashboarden. */
+  enabledPhaseKeys,
   // State
   dashboardLoading,
   dashboardOverview,
@@ -50,6 +52,7 @@ const Dashboard = ({
   onCreateProject,
   companyId = null,
   currentUserId = null,
+  currentUserEmail = null,
 }) => {
   // Dashboard styles (moved from HomeScreen)
   const dashboardContainerStyle = React.useMemo(() => ({ width: '100%', maxWidth: 1180, alignSelf: 'center' }), []);
@@ -61,6 +64,7 @@ const Dashboard = ({
         <View style={{ marginBottom: 24 }}>
           <DashboardAllProjects
             hierarchy={hierarchy}
+            enabledPhaseKeys={enabledPhaseKeys}
             onProjectSelect={onProjectSelect}
             formatRelativeTime={formatRelativeTime}
             companyName={companyName}
@@ -68,6 +72,7 @@ const Dashboard = ({
             dashboardLoading={dashboardLoading}
             companyId={companyId}
             currentUserId={currentUserId}
+            currentUserEmail={currentUserEmail}
             authClaims={authClaims}
           />
         </View>

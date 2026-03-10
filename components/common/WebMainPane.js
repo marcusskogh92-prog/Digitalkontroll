@@ -1,11 +1,7 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState } from 'react';
-import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, View } from 'react-native';
 import FFUAISummaryView from '../../Screens/FFUAISummaryView';
 import ProjectDetails from '../../Screens/ProjectDetails';
 import TemplateControlScreen from '../../Screens/TemplateControlScreen';
-import OfferterLayout from '../../features/offerter/OfferterLayout';
-import { subscribeUserNotifications } from '../firebase';
 import { Dashboard } from './Dashboard';
 import InlineProjectCreationPanel from './InlineProjectCreationPanel';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from './layoutConstants';
@@ -15,7 +11,6 @@ export default function WebMainPane(props) {
     authClaims,
     webPaneHeight,
     rightPaneScrollRef,
-    activityScrollRef,
     inlineControlEditor,
     closeInlineControlEditor,
     handleInlineControlFinished,
@@ -77,8 +72,7 @@ export default function WebMainPane(props) {
     companyProfile,
     companyId,
     routeCompanyId,
-    rightWidth,
-    panResponderRight,
+    enabledPhaseKeys,
     phaseActiveSection,
     phaseActiveItem,
     phaseActiveNode,
@@ -86,6 +80,7 @@ export default function WebMainPane(props) {
     setPhaseActiveItem,
     setPhaseActiveNode,
     onOpenCreateProjectModal,
+    onPhaseHeaderLabels,
 
     // AF-only explorer state (shared with left panel mirror)
     afRelativePath,
@@ -99,47 +94,13 @@ export default function WebMainPane(props) {
   } = props;
 
   const isWeb = Platform.OS === 'web';
+  const effectiveCompanyId = String(companyId ?? routeCompanyId ?? authClaims?.companyId ?? '').trim();
   const PANE_PADDING = 18;
-
-  const [userNotifications, setUserNotifications] = useState([]);
-  const [notificationsPanelOpen, setNotificationsPanelOpen] = useState(false);
-  const [notificationsError, setNotificationsError] = useState(null);
-  const effectiveCompanyId = (companyId != null && String(companyId).trim()) ? String(companyId).trim() : (routeCompanyId != null && String(routeCompanyId).trim()) ? String(routeCompanyId).trim() : (authClaims?.companyId != null && String(authClaims.companyId).trim()) ? String(authClaims.companyId).trim() : '';
-  const currentUserId = auth?.currentUser?.uid ?? null;
-  useEffect(() => {
-    if (!effectiveCompanyId || !currentUserId) {
-      setUserNotifications([]);
-      setNotificationsError(null);
-      return () => {};
-    }
-    setNotificationsError(null);
-    const unsub = subscribeUserNotifications(effectiveCompanyId, currentUserId, {
-      onData: (list) => {
-        setUserNotifications(Array.isArray(list) ? list : []);
-        setNotificationsError(null);
-      },
-      onError: (err) => {
-        setUserNotifications([]);
-        const msg = err?.message || '';
-        const isPermission = msg.toLowerCase().includes('permission') || err?.code === 'permission-denied';
-        setNotificationsError(
-          isPermission
-            ? 'Behörighet saknas. Deploya regler: firebase deploy --only firestore:rules. Logga sedan ut och in igen.'
-            : (msg || 'Kunde inte ladda notiser')
-        );
-      },
-      limitCount: 30,
-    });
-    return () => { try { unsub?.(); } catch (_e) {} };
-  }, [effectiveCompanyId, currentUserId]);
-  const unreadCount = userNotifications.filter((n) => !n?.read).length;
 
   // Avoid nested vertical ScrollViews on web.
   // ProjectDetails manages its own scrolling.
   const showOuterScroll = !(selectedProject || (inlineControlEditor && inlineControlEditor.project));
 
-  const isOfferterModule = String(projectModuleRoute?.moduleId || '') === 'offerter';
-  const offerterActiveItemId = String(projectModuleRoute?.itemId || '').trim() || 'forfragningar';
   const isFfuAiSummaryModule = String(projectModuleRoute?.moduleId || '') === 'ffu-ai-summary';
 
   const mainContent = inlineControlEditor && inlineControlEditor.project ? (
@@ -177,21 +138,16 @@ export default function WebMainPane(props) {
       setSelectedProjectPath={setSelectedProjectPath}
       isProjectNumberUnique={isProjectNumberUnique}
     />
-  ) : selectedProject && isOfferterModule ? (
-    <View style={{ flex: 1 }}>
-      <OfferterLayout
-        companyId={companyId}
-        projectId={selectedProject?.id}
-        project={selectedProject}
-        activeItemId={offerterActiveItemId}
-      />
+  ) : selectedProject && isFfuAiSummaryModule ? (
+    <View style={{ flex: 1, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}>
+      <FFUAISummaryView projectId={selectedProject?.id} companyId={effectiveCompanyId} project={selectedProject} />
     </View>
   ) : selectedProject && isFfuAiSummaryModule ? (
     <View style={{ flex: 1, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}>
       <FFUAISummaryView projectId={selectedProject?.id} companyId={effectiveCompanyId} project={selectedProject} />
     </View>
   ) : selectedProject ? (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, minHeight: 0 }}>
       <ProjectDetails
         route={{
           params: {
@@ -219,6 +175,7 @@ export default function WebMainPane(props) {
                 setPhaseActiveNode(null);
               }
             },
+            onPhaseHeaderLabels: onPhaseHeaderLabels,
           },
         }}
         navigation={navigation}
@@ -249,6 +206,7 @@ export default function WebMainPane(props) {
 
         <Dashboard
           authClaims={authClaims}
+          enabledPhaseKeys={enabledPhaseKeys}
           dashboardLoading={dashboardLoading}
           dashboardOverview={dashboardOverview}
           dashboardRecentProjects={dashboardRecentProjects}
@@ -331,6 +289,7 @@ export default function WebMainPane(props) {
           companyName={companyProfile?.companyName || companyProfile?.name || companyId || null}
           companyId={companyId || routeCompanyId}
           currentUserId={auth?.currentUser?.uid || null}
+          currentUserEmail={auth?.currentUser?.email || null}
           onCreateProject={onOpenCreateProjectModal}
         />
       </View>
@@ -343,174 +302,18 @@ export default function WebMainPane(props) {
         {showOuterScroll ? (
           <ScrollView
             ref={rightPaneScrollRef}
-            style={{ flex: 1, minHeight: 0 }}
+            style={{ flex: 1, minHeight: 0, backgroundColor: '#F5F7FA' }}
             contentContainerStyle={{ flexGrow: 1, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
           >
             {mainContent}
           </ScrollView>
         ) : (
-          <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
             {mainContent}
           </View>
         )}
 
       </View>
-
-      {isWeb ? (
-        notificationsPanelOpen ? (
-          <View
-            style={{
-              width: rightWidth,
-              minWidth: 340,
-              maxWidth: 520,
-              padding: 18,
-              borderLeftWidth: 1,
-              borderLeftColor: '#e6e6e6',
-              backgroundColor: '#F7FAFC',
-              position: 'relative',
-            }}
-          >
-            <View
-              style={{
-                position: 'absolute',
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: 1,
-                backgroundColor: '#e6e6e6',
-              }}
-            />
-            <View
-              {...(panResponderRight && panResponderRight.panHandlers)}
-              style={{
-                position: 'absolute',
-                left: -8,
-                top: 0,
-                bottom: 0,
-                width: 16,
-                cursor: 'col-resize',
-                zIndex: 9,
-                pointerEvents: 'auto',
-              }}
-            />
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <Text style={{ fontSize: 16, fontWeight: '600' }}>
-                Notiser och händelser
-              </Text>
-              <Pressable
-                onPress={() => setNotificationsPanelOpen(false)}
-                style={{ padding: 8 }}
-                hitSlop={8}
-              >
-                <Ionicons name="chevron-forward" size={24} color="#64748b" />
-              </Pressable>
-            </View>
-            <ScrollView
-              ref={activityScrollRef}
-              style={{ flex: 1 }}
-              contentContainerStyle={{ paddingTop: 0, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
-              scrollEnabled
-              nestedScrollEnabled
-            >
-              {notificationsError ? (
-                <Text style={{ fontSize: 13, color: '#b91c1c', marginBottom: 8 }}>
-                  {notificationsError}
-                </Text>
-              ) : null}
-              {userNotifications.length === 0 && !notificationsError ? (
-                <Text style={{ fontSize: 13, color: '#777' }}>
-                  Inga notiser än. När någon nämner dig i en kommentar (t.ex. @ditt namn) visas det här.
-                </Text>
-              ) : (
-                <View style={{ marginTop: 4 }}>
-                  {userNotifications.map((n, index) => {
-                    const isCommentMention = n?.type === 'comment_mention';
-                    const authorName = (n?.authorName && String(n.authorName).trim()) || 'Någon';
-                    const textPreview = (n?.textPreview && String(n.textPreview).trim()) ? String(n.textPreview).trim().slice(0, 120) : '';
-                    const timeText = (typeof formatRelativeTime === 'function' && n?.createdAt ? formatRelativeTime(n.createdAt) : null) || (n?.createdAt ? new Date(n.createdAt).toLocaleString('sv-SE', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
-                    return (
-                      <View
-                        key={n.id || index}
-                        style={{
-                          paddingVertical: 10,
-                          paddingHorizontal: 0,
-                          borderBottomWidth: index < userNotifications.length - 1 ? 1 : 0,
-                          borderBottomColor: '#E2E8F0',
-                        }}
-                      >
-                        {isCommentMention ? (
-                          <>
-                            <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: '500' }}>
-                              {authorName} nämnde dig i en kommentar
-                            </Text>
-                            {textPreview ? (
-                              <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }} numberOfLines={2}>
-                                “{textPreview}{textPreview.length >= 120 ? '…' : ''}”
-                              </Text>
-                            ) : null}
-                          </>
-                        ) : (
-                          <Text style={{ fontSize: 13, color: '#0F172A' }}>
-                            {n?.textPreview || 'Ny händelse'}
-                          </Text>
-                        )}
-                        {timeText ? (
-                          <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
-                            {timeText}
-                          </Text>
-                        ) : null}
-                      </View>
-                    );
-                  })}
-                </View>
-              )}
-            </ScrollView>
-          </View>
-        ) : (
-          <View
-            style={{
-              width: 52,
-              minWidth: 52,
-              borderLeftWidth: 1,
-              borderLeftColor: '#e6e6e6',
-              backgroundColor: '#F7FAFC',
-              alignItems: 'center',
-              paddingTop: 16,
-            }}
-          >
-            <Pressable
-              onPress={() => setNotificationsPanelOpen(true)}
-              style={{ position: 'relative', padding: 8 }}
-              hitSlop={8}
-            >
-              <Ionicons name="notifications-outline" size={26} color="#1976D2" />
-              {unreadCount > 0 ? (
-                <View
-                  style={{
-                    position: 'absolute',
-                    top: 4,
-                    right: 4,
-                    backgroundColor: '#D32F2F',
-                    borderRadius: 10,
-                    minWidth: 18,
-                    height: 18,
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    paddingHorizontal: 5,
-                  }}
-                >
-                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
-                    {unreadCount > 99 ? '99+' : unreadCount}
-                  </Text>
-                </View>
-              ) : null}
-            </Pressable>
-            <Text style={{ fontSize: 10, color: '#64748b', marginTop: 4, textAlign: 'center' }} numberOfLines={2}>
-              Notiser
-            </Text>
-          </View>
-        )
-      ) : null}
     </View>
   );
 }

@@ -230,7 +230,7 @@ function Row({ label, value, tone = 'normal' }) {
 
 const TIDSPLAN_ITEM_ID = 'tidsplan-viktiga-datum';
 
-export default function OversiktDashboard({ companyId, projectId, project, onNavigate }) {
+export default function OversiktDashboard({ companyId, projectId, project, onNavigate, onNavigateToFragaSvar }) {
   const [navigatingTo, setNavigatingTo] = useState(null);
 
   const projectNumber = String(project?.projectNumber || project?.number || project?.id || '').trim();
@@ -381,7 +381,7 @@ export default function OversiktDashboard({ companyId, projectId, project, onNav
         <Card
           title="Frågor & svar"
           icon="chatbox-ellipses-outline"
-          onPress={() => onNavigate?.('status-beslut')}
+          onPress={() => (onNavigateToFragaSvar ? onNavigateToFragaSvar() : onNavigate?.('status-beslut'))}
         >
           <Row label="Totalt" value={String(fsSummary.total)} />
           <Row label="Obesvarade" value={String(fsSummary.unanswered)} />

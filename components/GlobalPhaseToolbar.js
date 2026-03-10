@@ -91,10 +91,21 @@ export default function GlobalPhaseToolbar({ navigation, route }) {
     };
   }, [phaseDropdownOpen]);
 
+  // Faserna Produktion, Avslutat, Eftermarknad visar "Kommer snart" i rail tills de är färdigutvecklade
+  const COMING_SOON_PHASES = ['produktion', 'avslut', 'eftermarknad'];
+
   // Request phase change - shows confirmation dialog
   const handlePhaseChangeRequest = (newPhaseKey) => {
     if (newPhaseKey === selectedPhase) {
       setPhaseDropdownOpen(false);
+      return;
+    }
+
+    if (COMING_SOON_PHASES.includes(newPhaseKey)) {
+      setPhaseDropdownOpen(false);
+      const newPhase = PROJECT_PHASES.find(p => p.key === newPhaseKey);
+      const phaseName = newPhase?.name || newPhaseKey;
+      Alert.alert('Kommer snart', `${phaseName} är under utveckling.`);
       return;
     }
 

@@ -84,6 +84,10 @@ function migrateStoredSectionId(section) {
   if (looksLikeLegacyOfferterSection(section)) {
     return { ...section, id: 'offerter' };
   }
+  // Myndigheter-sektionen är borttagen; hoppa över så att den inte hamnar i merged nav.
+  if (String(section?.id || '').trim().toLowerCase() === 'myndigheter') {
+    return null;
+  }
   return section;
 }
 
@@ -91,8 +95,8 @@ function normalizeStoredNavigation(storedNav) {
   const nav = storedNav && typeof storedNav === 'object' ? storedNav : {};
   const sections = Array.isArray(nav.sections) ? nav.sections : [];
 
-  // Map legacy ids -> current ids.
-  const migrated = sections.map(migrateStoredSectionId).filter(Boolean);
+  // Map legacy ids -> current ids; filter out removed sections (e.g. myndigheter).
+  const migrated = sections.map(migrateStoredSectionId).filter((s) => s != null);
 
   // Deduplicate by id and MERGE (so legacy/custom duplicates don't lose custom items).
   const byId = new Map();

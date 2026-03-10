@@ -421,8 +421,28 @@ exports.deleteProject = async (data, context) => {
       functions.logger.info('[deleteProject] SharePoint folder not found – treating as already deleted');
     }
 
-    // 2) Firestore cleanup last.
-    const firestore = await deleteProjectFirestore({ companyId, projectId, projectDoc });
+    // 2) Firestore cleanup last. If this fails, SharePoint may already be deleted (recycle bin).
+    try {
+      await deleteProjectFirestore({ companyId, projectId, projectDoc });
+    } catch (firestoreErr) {
+      const fsMsg = firestoreErr?.message || String(firestoreErr);
+      functions.logger.warn('[deleteProject] Firestore cleanup failed after SharePoint delete', { projectId, error: fsMsg });
+      await logAdminAuditEvent({
+        companyId,
+        actorUid: actor.uid,
+        actorEmail: actor.email,
+        action: 'delete_project_firestore_failed',
+        targetType: 'project',
+        targetId: projectId,
+        error: fsMsg,
+        sharePointAlreadyDeleted: true,
+        ts: FieldValue.serverTimestamp(),
+      });
+      throw new functions.https.HttpsError(
+        'internal',
+        `Projektet togs bort från SharePoint men rensning av databasen misslyckades. Ladda om sidan. Detaljer: ${fsMsg}`
+      );
+    }
 
     await logAdminAuditEvent({
       companyId,
@@ -440,18 +460,20 @@ exports.deleteProject = async (data, context) => {
 
     return { status: 'success', sharepoint: sp?.sharepoint === 'not_found' ? 'not_found' : 'deleted' };
   } catch (e) {
-    if (e instanceof functions.https.HttpsError && e.code === 'failed-precondition' && e.message === GRAPH_TOKEN_MISSING_MSG) {
-      await logAdminAuditEvent({
-        companyId,
-        actorUid: actor.uid,
-        actorEmail: actor.email,
-        action: 'delete_project_sharepoint_failed',
-        targetType: 'project',
-        targetId: projectId,
-        error: GRAPH_TOKEN_MISSING_MSG,
-        ts: FieldValue.serverTimestamp(),
-      });
-      throw new functions.https.HttpsError('failed-precondition', GRAPH_TOKEN_MISSING_MSG);
+    if (e instanceof functions.https.HttpsError) {
+      if (e.code === 'failed-precondition' && e.message === GRAPH_TOKEN_MISSING_MSG) {
+        await logAdminAuditEvent({
+          companyId,
+          actorUid: actor.uid,
+          actorEmail: actor.email,
+          action: 'delete_project_sharepoint_failed',
+          targetType: 'project',
+          targetId: projectId,
+          error: GRAPH_TOKEN_MISSING_MSG,
+          ts: FieldValue.serverTimestamp(),
+        });
+      }
+      throw e;
     }
 
     const msg = e?.message || String(e);
@@ -466,7 +488,6 @@ exports.deleteProject = async (data, context) => {
       ts: FieldValue.serverTimestamp(),
     });
 
-    // SharePoint failed => do NOT delete Firestore.
     throw new functions.https.HttpsError('internal', `SharePoint folder deletion failed: ${msg}`);
   }
 };

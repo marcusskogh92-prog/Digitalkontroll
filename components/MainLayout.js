@@ -1,7 +1,7 @@
 import ProjectSidebar from './ProjectSidebar';
 import AdminSidebar from './common/AdminSidebar';
 import CompanyBanner from './common/CompanyBanner';
-import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from './common/layoutConstants';
+import { DK_MIDDLE_PANE_BOTTOM_GUTTER, GLOBAL_HEADER_HEIGHT } from './common/layoutConstants';
 
 const MainLayout = ({
   children,
@@ -50,10 +50,10 @@ const MainLayout = ({
   return (
 	<div
       style={{
-        // Web: React Navigation renders a fixed header (see App.js headerStyle height: 96).
+        // Web: React Navigation renders a fixed header (see App.js GLOBAL_HEADER_HEIGHT).
         // Use a fixed layout *below* that header so the middle pane can scroll reliably.
         position: 'fixed',
-        top: 96,
+        top: GLOBAL_HEADER_HEIGHT,
         left: 0,
         right: 0,
         bottom: 0,

@@ -6,10 +6,20 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
-import { useCallback, useEffect, useState } from 'react';
-import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useContext, useEffect, useState } from 'react';
+import { Alert, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
-import { auth, fetchCompanies } from '../firebase';
+import { auth, fetchCompanies, getCompanyMember } from '../firebase';
+import { AdminModalContext } from './AdminModalContext';
+
+/** Menypost → behörighet. Saknas = kräver inte specifik behörighet (synlig för alla admins). */
+const MENU_ITEM_PERMISSIONS = {
+  manage_control_types: 'manage_templates',
+  manage_users: 'manage_users',
+  kategorier: 'manage_categories',
+  sharepoint_sites: 'manage_sharepoint',
+  ai_prompts: 'manage_ai_settings',
+};
 
 const dispatchWindowEvent = (name, detail) => {
   try {
@@ -33,10 +43,13 @@ export default function AdminSidebar({
   showCompanySelector = true,
 }) {
   const navigation = useNavigation();
+  const { openAIPromptsModal, openKategoriModal, openMallarModal } = useContext(AdminModalContext) || {};
   const [companies, setCompanies] = useState([]);
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [isCompanyAdmin, setIsCompanyAdmin] = useState(false);
+  /** Superadmin's primary company (from auth claims). Used when going Home so context resets to this company. */
+  const [primaryCompanyId, setPrimaryCompanyId] = useState('');
   const [spinHome, setSpinHome] = useState(0);
   const [spinRefresh, setSpinRefresh] = useState(0);
   const [spinAdminIcons, setSpinAdminIcons] = useState({});
@@ -44,6 +57,8 @@ export default function AdminSidebar({
   const [expandedCompanies, setExpandedCompanies] = useState({});
   const [spinCompanyChevrons, setSpinCompanyChevrons] = useState({});
   const [storedCompanyId, setStoredCompanyId] = useState('');
+  /** Behörigheter för inloggad användare i valt företag (endast för admin-roll). Används för att dimma och blockera menyposter. */
+  const [adminPermissions, setAdminPermissions] = useState([]);
 
   const normalizeCompanyId = (value) => {
     try {
@@ -74,15 +89,40 @@ export default function AdminSidebar({
         const claims = tokenRes?.claims || {};
         const superadminFlag = !!(claims.superadmin === true || claims.role === 'superadmin' || isEmailSuperadmin);
         const adminClaim = !!(claims && (claims.admin === true || claims.role === 'admin'));
-        
+        const fromClaims = String(claims?.companyId || '').trim();
         if (mounted) {
           setIsSuperadmin(superadminFlag);
           setIsCompanyAdmin(adminClaim);
+          setPrimaryCompanyId(fromClaims);
         }
       } catch (_e) {}
     })();
     return () => { mounted = false; };
   }, []);
+
+  // Ladda användarens behörigheter för valt företag (för att dimma/blockera menyposter)
+  useEffect(() => {
+    let mounted = true;
+    const cid = normalizeCompanyId(expandedCompanyId);
+    const uid = auth?.currentUser?.uid;
+    if (!cid || !uid || isSuperadmin) {
+      setAdminPermissions([]);
+      return undefined;
+    }
+    (async () => {
+      try {
+        const member = await getCompanyMember(cid, uid);
+        if (!mounted) return;
+        const role = String(member?.role || '').trim();
+        const isAdmin = role === 'admin' || role === 'superadmin';
+        const perms = isAdmin && Array.isArray(member?.permissions) ? member.permissions : [];
+        setAdminPermissions(perms);
+      } catch (_e) {
+        if (mounted) setAdminPermissions([]);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [expandedCompanyId, isSuperadmin, auth?.currentUser?.uid]);
 
   // Load last selected company id (for company-admins who don't see all companies)
   useEffect(() => {
@@ -168,29 +208,31 @@ export default function AdminSidebar({
       items.push(
         { key: 'manage_users', label: 'Användare', icon: 'person', color: '#1976D2', screen: 'ManageUsers' },
         { key: 'contact_registry', label: 'Kontaktregister', icon: 'book-outline', color: '#1976D2', screen: 'ContactRegistry' },
+        { key: 'ai_prompts', label: 'AI-analys', icon: 'sparkles-outline', color: '#1976D2', screen: 'AIPrompts' },
         { key: 'suppliers', label: 'Leverantörer', icon: 'business-outline', color: '#1976D2', screen: 'Suppliers' },
         { key: 'customers', label: 'Kunder', icon: 'people-outline', color: '#1976D2', screen: 'Customers' },
-        { key: 'sharepoint_navigation', label: 'SharePoint Navigation', icon: 'cloud-outline', color: '#1976D2', screen: 'ManageSharePointNavigation' },
+        { key: 'kategorier', label: 'Kategorier', icon: 'pricetag-outline', color: '#1976D2', screen: 'Kategorier' },
+        { key: 'sharepoint_sites', label: 'SharePoint', icon: 'cloud-outline', color: '#1976D2', screen: 'ManageCompany', focus: 'sharepoint' },
       );
     }
 
     return items;
   };
 
-  const normalizeCompanyLabel = (company) => String(company?.name || company?.id || '').trim();
-  const isMsByggsystem = (company) => {
+  const normalizeCompanyLabel = useCallback((company) => String(company?.name || company?.id || '').trim(), []);
+  const isMsByggsystem = useCallback((company) => {
     const label = normalizeCompanyLabel(company);
     return label === 'MS Byggsystem' || String(company?.id || '').trim() === 'MS Byggsystem';
-  };
+  }, [normalizeCompanyLabel]);
 
-  const getSortedCompanies = () => {
+  const getSortedCompanies = useCallback(() => {
     const list = Array.isArray(companies) ? [...companies] : [];
     const pinned = list.filter(isMsByggsystem);
     const rest = list.filter(c => !isMsByggsystem(c));
     rest.sort((a, b) => normalizeCompanyLabel(a).localeCompare(normalizeCompanyLabel(b), 'sv'));
     // If there are multiple MS Byggsystem entries for some reason, keep their relative order.
     return [...pinned, ...rest];
-  };
+  }, [companies, isMsByggsystem, normalizeCompanyLabel]);
 
   const persistCompanySelection = async (cid, companyObj) => {
     try {
@@ -208,8 +250,19 @@ export default function AdminSidebar({
     }
   };
 
+  const hasPermissionForItem = useCallback((item) => {
+    if (isSuperadmin) return true;
+    const required = MENU_ITEM_PERMISSIONS[item.key];
+    if (!required) return true;
+    return Array.isArray(adminPermissions) && adminPermissions.includes(required);
+  }, [isSuperadmin, adminPermissions]);
+
   const handleCompanyMenuClick = async (company, item) => {
     try {
+      if (!hasPermissionForItem(item)) {
+        Alert.alert('Behörighet krävs', `Du har inte behörighet för "${item.label}".`);
+        return;
+      }
       setSpinAdminIcons((prev) => ({
         ...prev,
         [item.key]: (prev[item.key] || 0) + 1,
@@ -221,11 +274,12 @@ export default function AdminSidebar({
       }
 
       if (item.screen === 'ManageCompany') {
-        navigation.navigate('ManageCompany', { companyId: cid });
+        navigation.navigate('ManageCompany', { companyId: cid, focus: item.focus || undefined });
       } else if (item.screen === 'ManageUsers') {
         navigation.navigate('ManageUsers', { companyId: cid });
       } else if (item.screen === 'ManageControlTypes') {
-        navigation.navigate('ManageControlTypes', { companyId: cid });
+        if (openMallarModal) openMallarModal(cid);
+        else navigation.navigate('ManageControlTypes', { companyId: cid });
       } else if (item.screen === 'ContactRegistry') {
         navigation.navigate('ContactRegistry', {
           companyId: cid,
@@ -235,6 +289,12 @@ export default function AdminSidebar({
         navigation.navigate('Suppliers', { companyId: cid });
       } else if (item.screen === 'Customers') {
         navigation.navigate('Customers', { companyId: cid });
+      } else if (item.screen === 'AIPrompts') {
+        if (openAIPromptsModal) openAIPromptsModal(cid);
+        else navigation.navigate('AIPrompts', { companyId: cid });
+      } else if (item.screen === 'Kategorier') {
+        if (openKategoriModal) openKategoriModal(cid);
+        else navigation.navigate('ManageCompany', { companyId: cid, focus: 'kategorier' });
       } else if (item.screen === 'ManageSharePointNavigation') {
         navigation.navigate('ManageSharePointNavigation', { companyId: cid });
       }
@@ -271,11 +331,27 @@ export default function AdminSidebar({
     await handleCompanySelect(company);
   };
 
-  const handleGoHome = () => {
+  const handleGoHome = useCallback(async () => {
     try {
+      // Superadmin: always return to primary company (the one they're "logged in on"), not the last-viewed admin company.
+      if (isSuperadmin) {
+        const primary = normalizeCompanyId(primaryCompanyId)
+          || (() => {
+            const sorted = getSortedCompanies();
+            const first = sorted[0];
+            return normalizeCompanyId(first?.id || first?.name);
+          })();
+        if (primary) {
+          await AsyncStorage.setItem('dk_companyId', primary);
+          if (Platform.OS === 'web') {
+            try { window?.localStorage?.setItem?.('dk_companyId', primary); } catch (_e) {}
+          }
+          setStoredCompanyId(primary);
+        }
+      }
       dispatchWindowEvent('dkGoHome');
     } catch (_e) {}
-  };
+  }, [isSuperadmin, primaryCompanyId, getSortedCompanies]);
 
   const handleHardRefresh = async () => {
     // Refresh current admin screen (web) + refresh companies list (superadmin)
@@ -461,6 +537,7 @@ export default function AdminSidebar({
                               const subHoverKey = `company|${cid}|item|${item.key}`;
                               const isHoveredSub = hoveredKey === subHoverKey;
                               const spinCount = spinAdminIcons[item.key] || 0;
+                              const hasPerm = hasPermissionForItem(item);
 
                               return (
                                 <div
@@ -477,7 +554,8 @@ export default function AdminSidebar({
                                     padding: '8px 10px',
                                     marginBottom: 4,
                                     borderRadius: 8,
-                                    cursor: 'pointer',
+                                    cursor: hasPerm ? 'pointer' : 'not-allowed',
+                                    opacity: hasPerm ? 1 : 0.5,
                                     backgroundColor: isActive ? LEFT_NAV.activeBg : (isHoveredSub ? LEFT_NAV.hoverBg : 'transparent'),
                                     borderLeft: isActive ? `3px solid ${LEFT_NAV.activeBorder}` : '3px solid transparent',
                                     transition: 'background-color 0.15s',
@@ -488,7 +566,7 @@ export default function AdminSidebar({
                                   <Ionicons
                                     name={item.icon}
                                     size={16}
-                                    color={item.color || (isActive ? LEFT_NAV.iconDefault : isHoveredSub ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted)}
+                                    color={hasPerm ? (item.color || (isActive ? LEFT_NAV.iconDefault : isHoveredSub ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted)) : LEFT_NAV.iconMuted}
                                     style={{
                                       marginRight: 10,
                                       transform: `rotate(${spinCount * 360}deg)`,
@@ -498,7 +576,7 @@ export default function AdminSidebar({
                                   <span style={{
                                     fontSize: 14,
                                     fontWeight: isActive ? '700' : '400',
-                                    color: isHoveredSub ? LEFT_NAV.hoverText : LEFT_NAV.textDefault,
+                                    color: hasPerm ? (isHoveredSub ? LEFT_NAV.hoverText : LEFT_NAV.textDefault) : LEFT_NAV.iconMuted,
                                   }}>
                                     {item.label}
                                   </span>
@@ -680,6 +758,7 @@ export default function AdminSidebar({
                               {companyMenuItems.map((item) => {
                                 const isActive = isSelected && currentScreen === item.key;
                                 const spinCount = spinAdminIcons[item.key] || 0;
+                                const hasPerm = hasPermissionForItem(item);
                                 return (
                                   <TouchableOpacity
                                     key={item.key}
@@ -690,6 +769,7 @@ export default function AdminSidebar({
                                       padding: 10,
                                       marginBottom: 4,
                                       borderRadius: 8,
+                                      opacity: hasPerm ? 1 : 0.5,
                                       backgroundColor: isActive ? LEFT_NAV.activeBg : 'transparent',
                                       borderLeftWidth: 3,
                                       borderLeftColor: isActive ? LEFT_NAV.activeBorder : 'transparent',
@@ -698,10 +778,10 @@ export default function AdminSidebar({
                                     <Ionicons
                                       name={item.icon}
                                       size={16}
-                                      color={item.color || LEFT_NAV.iconMuted}
+                                      color={hasPerm ? (item.color || LEFT_NAV.iconMuted) : LEFT_NAV.iconMuted}
                                       style={{ marginRight: 10, transform: [{ rotate: `${spinCount * 360}deg` }] }}
                                     />
-                                    <Text style={{ fontSize: 14, fontWeight: isActive ? '700' : '400', color: LEFT_NAV.textDefault }}>
+                                    <Text style={{ fontSize: 14, fontWeight: isActive ? '700' : '400', color: hasPerm ? LEFT_NAV.textDefault : LEFT_NAV.iconMuted }}>
                                       {item.label}
                                     </Text>
                                   </TouchableOpacity>

@@ -50,6 +50,7 @@ async function createUser(data, context) {
     const passwordToUse = providedPassword || tempPassword;
 
     const role = (data && data.role) || 'user';
+    const permissions = Array.isArray(data && data.permissions) ? data.permissions : [];
 
     let userRecord = null;
     try {
@@ -76,7 +77,7 @@ async function createUser(data, context) {
     }
 
     const memberRef = db.doc(`foretag/${companyId}/members/${userRecord.uid}`);
-    await memberRef.set({
+    const memberData = {
       uid: userRecord.uid,
       companyId,
       displayName: displayName || null,
@@ -86,7 +87,9 @@ async function createUser(data, context) {
       role: role,
       avatarPreset,
       createdAt: FieldValue.serverTimestamp(),
-    });
+    };
+    if (permissions.length > 0) memberData.permissions = permissions;
+    await memberRef.set(memberData);
 
     try {
       await db.collection(`foretag/${companyId}/activity`).add({
@@ -216,6 +219,7 @@ async function updateUser(data, context) {
   const disabled = (data && Object.prototype.hasOwnProperty.call(data, 'disabled')) ? !!data.disabled : null;
   const photoURL = (data && Object.prototype.hasOwnProperty.call(data, 'photoURL')) ? (data.photoURL ? String(data.photoURL) : '') : null;
   const avatarPreset = (data && Object.prototype.hasOwnProperty.call(data, 'avatarPreset')) ? (data.avatarPreset ? String(data.avatarPreset) : '') : null;
+  const permissions = (data && Array.isArray(data.permissions)) ? data.permissions : null;
 
   if (!uid) throw new functions.https.HttpsError('invalid-argument', 'uid is required');
   if (!companyId) throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
@@ -256,6 +260,7 @@ async function updateUser(data, context) {
     if (typeof disabled === 'boolean') memberUpdate.disabled = disabled;
     if (photoURL !== null) memberUpdate.photoURL = photoURL || null;
     if (avatarPreset !== null) memberUpdate.avatarPreset = avatarPreset || null;
+    if (permissions !== null) memberUpdate.permissions = permissions;
     if (Object.keys(memberUpdate).length > 0) {
       await memberRef.set(Object.assign({}, memberUpdate, { updatedAt: FieldValue.serverTimestamp() }), { merge: true });
     }

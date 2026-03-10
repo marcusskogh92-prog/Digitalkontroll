@@ -7,6 +7,7 @@ export default function NativeMainPane({
   rightPaneScrollRef,
   selectedProject,
   companyId,
+  enabledPhaseKeys,
   projectSelectedAction,
   handleInlineLockChange,
   phaseActiveSection,
@@ -107,6 +108,7 @@ export default function NativeMainPane({
       ) : (
         <View style={{ flex: 1, padding: 18 }}>
           <Dashboard
+            enabledPhaseKeys={enabledPhaseKeys}
             dashboardLoading={dashboardLoading}
             dashboardOverview={dashboardOverview}
             dashboardRecentProjects={dashboardRecentProjects}
@@ -192,6 +194,7 @@ export default function NativeMainPane({
             }
             companyId={companyId || routeCompanyId}
             currentUserId={auth?.currentUser?.uid || null}
+            currentUserEmail={auth?.currentUser?.email || null}
             onCreateProject={() => {
               // Preferred flow: SharePoint-based CreateProjectModal.
               if (typeof onOpenCreateProjectModal === 'function') {

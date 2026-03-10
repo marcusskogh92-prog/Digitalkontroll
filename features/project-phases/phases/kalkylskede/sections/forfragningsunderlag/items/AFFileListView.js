@@ -1,4 +1,4 @@
-import SharePointFolderFileArea from '@components/common/SharePointFiles/SharePointFolderFileArea';
+import DigitalkontrollsUtforskare from '@components/common/DigitalkontrollsUtforskare';
 
 function safeText(v) {
   if (v === null || v === undefined) return '';
@@ -24,7 +24,7 @@ export default function AFFileListView({ companyId, project, afRelativePath = ''
   const scopeRootPath = `${basePath}/${FORFRAGNINGSUNDERLAG_FOLDER}`.replace(/^\/+/, '').replace(/\/+/, '/');
 
   return (
-    <SharePointFolderFileArea
+    <DigitalkontrollsUtforskare
       companyId={companyId}
       project={project}
       title="Administrativa föreskrifter (AF)"

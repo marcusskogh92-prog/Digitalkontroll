@@ -6,8 +6,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, TouchableOpacity } from 'react-native';
+import { AdminModalContext } from './common/AdminModalContext';
 import ContextMenu from './ContextMenu';
 import { auth } from './firebase';
 
@@ -19,6 +20,7 @@ let portalRootId = 'dk-admin-menu-portal';
 
 export default function HeaderAdminMenu() {
   const navigation = useNavigation();
+  const { openCompanyModal } = useContext(AdminModalContext) || {};
   const btnRef = useRef(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
@@ -96,7 +98,6 @@ export default function HeaderAdminMenu() {
     menuItems.push({ key: 'contact_registry', label: 'Kontaktregister', icon: <Ionicons name="book-outline" size={16} color="#1976D2" /> });
     menuItems.push({ key: 'suppliers', label: 'Leverantörer', icon: <Ionicons name="business-outline" size={16} color="#1976D2" /> });
     menuItems.push({ key: 'customers', label: 'Kunder', icon: <Ionicons name="people-outline" size={16} color="#1976D2" /> });
-    menuItems.push({ key: 'sharepoint_navigation', label: 'SharePoint Navigation', icon: <Ionicons name="cloud-outline" size={16} color="#1976D2" /> });
   }
 
   // Om inga admin-funktioner finns, visa inget
@@ -116,8 +117,11 @@ export default function HeaderAdminMenu() {
           setMenuVisible(false);
           if (!it) return;
           const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
-          if (it.key === 'manage_company') return navigation.navigate('ManageCompany');
-          if (it.key === 'manage_users') return navigation.navigate('ManageUsers', { companyId: cid });
+          if (it.key === 'manage_company') return openCompanyModal?.(cid);
+          if (it.key === 'manage_users') {
+            if (openCompanyModal && cid) return openCompanyModal(cid, 'anvandare');
+            return navigation.navigate('ManageUsers', { companyId: cid });
+          }
           if (it.key === 'contact_registry') {
             return navigation.navigate('ContactRegistry', {
               companyId: cid,
@@ -131,11 +135,6 @@ export default function HeaderAdminMenu() {
           }
           if (it.key === 'customers') {
             return navigation.navigate('Customers', {
-              companyId: cid,
-            });
-          }
-          if (it.key === 'sharepoint_navigation') {
-            return navigation.navigate('ManageSharePointNavigation', {
               companyId: cid,
             });
           }

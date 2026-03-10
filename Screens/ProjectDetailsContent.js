@@ -534,7 +534,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   if (projectPhaseKey && companyId && project?.id && PhaseLayoutComponent) {
     try {
       return (
-        <View style={{ flex: 1, backgroundColor: '#f4f6fa', width: '100%' }}>
+        <View style={{ flex: 1, minHeight: 0, backgroundColor: '#f4f6fa', width: '100%' }}>
           <PhaseLayoutComponent
             companyId={companyId}
             projectId={project.id}
@@ -553,6 +553,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             onExternalItemChange={route?.params?.onPhaseItemChange}
             onPhaseChange={handleProjectPhaseChange}
             reactNavigation={navigation}
+            onHeaderLabelsChange={route?.params?.onPhaseHeaderLabels}
           />
         </View>
       );

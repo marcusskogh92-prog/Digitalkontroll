@@ -1,20 +1,36 @@
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useRef, useState } from 'react';
-import { Alert, Animated, Easing, ImageBackground, Platform, Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Animated, Easing, ImageBackground, Modal, Platform, Pressable, ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { AdminModalContext } from '../components/common/AdminModalContext';
 import { formatRelativeTime } from '../components/common/Dashboard/dashboardUtils';
 import { useDashboard } from '../components/common/Dashboard/useDashboard';
+import { DashboardRightPanel } from '../components/common/DashboardRightPanel';
+import { GlobalSidePanel } from '../components/common/GlobalSidePanel';
+import { GlobalSidePanelContent, LeftPanelRailHeader } from '../components/common/GlobalSidePanelContent';
 import { HeaderSearchDropdown } from '../components/common/HeaderSearchDropdown';
 import { HomeHeader } from '../components/common/HomeHeader';
 import HomeMainPaneContainer from '../components/common/HomeMainPaneContainer';
 import { HomeMobileProjectTreeContainer } from '../components/common/HomeMobileProjectTreeContainer';
 import { HomeTasksSection } from '../components/common/HomeTasksSection';
+import { IconRail } from '../components/common/IconRail';
+import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstants';
+import { MinimalTopbar } from '../components/common/MinimalTopbar';
 import { NewProjectModal, SimpleProjectLoadingModal, SimpleProjectModal, SimpleProjectSuccessModal } from '../components/common/Modals';
+import ComingSoonPhaseModal from '../components/common/Modals/ComingSoonPhaseModal';
 import CreateProjectModal from '../components/common/Modals/CreateProjectModal';
+import MyProfileModal from '../components/common/Modals/MyProfileModal';
+import RailActivityPanel from '../components/common/RailActivityPanel';
 import { SearchProjectModal } from '../components/common/SearchProjectModal';
 import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
-import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstants';
-import { auth, saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
+import ContextMenu from '../components/ContextMenu';
+import { auth, clearProjectPresence, fetchCompanies, fetchCompanyProject, formatSharePointProjectFolderName, markAllNotificationsAsRead, patchCompanyProject, purgeCompanyRemote, saveControlToFirestore, saveDraftToFirestore, setProjectPresence, subscribeCompanyProjects, subscribeUserNotifications, updateSharePointProjectPropertiesFromFirestoreProject } from '../components/firebase';
+import { formatPersonName } from '../components/formatPersonName';
 import { onProjectUpdated } from '../components/projectBus';
+import { getMainPanelBackgroundStyle, getRightPanelBackgroundStyle, PANEL_DIVIDER_LEFT } from '../constants/backgroundTheme';
+import { LAYOUT_2026 } from '../constants/iconRailTheme';
+import { ProjectScrollContext } from '../contexts/ProjectScrollContext';
+import PlaneringView from '../features/planering/PlaneringView';
 import { usePhaseNavigation } from '../features/project-phases/phases/hooks/usePhaseNavigation';
 import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
 import { useAdminSupportTools } from '../hooks/useAdminSupportTools';
@@ -31,11 +47,15 @@ import { useHomeTasksSection } from '../hooks/useHomeTasksSection';
 import { useHomeTreeInteraction } from '../hooks/useHomeTreeInteraction';
 import { useHomeUserActivity } from '../hooks/useHomeUserActivity';
 import { useHomeWebNavigation } from '../hooks/useHomeWebNavigation';
+import { useModalKeyboard } from '../hooks/useModalKeyboard';
 import { useProjectCreation } from '../hooks/useProjectCreation';
 import { useSharePointHierarchy } from '../hooks/useSharePointHierarchy';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 import { useTreeContextMenu } from '../hooks/useTreeContextMenu';
+import { moveDriveItemByPath, moveDriveItemAcrossSitesByPath, renameDriveItemByPath } from '../services/azure/hierarchyService';
+import { normalizeSiteIdForGraph } from '../services/azure/graphSiteId';
 import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
+import ManageSharePointNavigation from './ManageSharePointNavigation';
 
 // Web-only: lazily resolve ReactDOM.createPortal at runtime so the file
 // still works in native bundles where react-dom is not available.
@@ -70,6 +90,11 @@ export default function HomeScreen({ navigation, route }) {
   const [spinSidebarRefresh, setSpinSidebarRefresh] = useState(0);
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const [headerHeight, setHeaderHeight] = useState(0);
+  const [projectScrollY, setProjectScrollY] = useState(0);
+  const [userMenuVisible, setUserMenuVisible] = useState(false);
+  const [userMenuPos, setUserMenuPos] = useState({ x: 20, y: 64 });
+  const [myProfileModalVisible, setMyProfileModalVisible] = useState(false);
+  const [myProfileCompanyId, setMyProfileCompanyId] = useState('');
   const leftTreeScrollRef = useRef(null);
   const rightPaneScrollRef = useRef(null);
   const activityScrollRef = useRef(null);
@@ -219,32 +244,230 @@ export default function HomeScreen({ navigation, route }) {
       try {
         const current = String(companyId || '').trim();
         const fromClaims = String(authClaims?.companyId || '').trim();
-        const cid = current || fromClaims;
+        let cid = current || fromClaims;
+        if (!cid) {
+          const stored = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+          const fromLs = Platform.OS === 'web' && typeof window?.localStorage?.getItem === 'function'
+            ? String(window.localStorage.getItem('dk_companyId') || '').trim()
+            : '';
+          cid = stored || fromLs;
+          if (cid) setCompanyId(cid);
+        }
         if (!cid) return;
-        if (!current && fromClaims) {
-          setCompanyId(fromClaims);
-        }
+        if (!current && cid) setCompanyId(cid);
         const stored = await AsyncStorage.getItem('dk_companyId');
-        if (stored !== cid) {
-          await AsyncStorage.setItem('dk_companyId', cid);
-        }
+        if (stored !== cid) await AsyncStorage.setItem('dk_companyId', cid);
       } catch(_e) {}
     })();
   }, [companyId, authClaims?.companyId]);
 
   const [hierarchyReloadKey, setHierarchyReloadKey] = useState(0);
+  const [projectsListRefreshKey, setProjectsListRefreshKey] = useState(0);
+  const [companyProjects, setCompanyProjects] = useState([]);
+  const [railActiveId, setRailActiveId] = useState('dashboard');
+  /** Web 2026: tydlig separation dashboard / sharepoint (projekt-browser) / project. Rail styr endast mode. */
+  const [appMode, setAppMode] = useState('dashboard');
+  const [sidePanelCollapsed, setSidePanelCollapsed] = useState(true); // stängd vid inloggning (hemskärm visar inget i panelen)
+  const [dashboardRightPanelCollapsed, setDashboardRightPanelCollapsed] = useState(false);
+  /** Högerpanel: 'calendar' | 'activities' – kalender eller Aktiviteter (notiser). */
+  const [dashboardRightPanelTab, setDashboardRightPanelTab] = useState('calendar');
+  const dashboardRightPanelWidthAnim = useRef(new Animated.Value(0)).current;
+  const [activeSidePanelItemKey, setActiveSidePanelItemKey] = useState(null);
+  const [isSuperAdminResolved, setIsSuperAdminResolved] = useState(false);
+  const [superadminCompanies, setSuperadminCompanies] = useState([]);
+  const [superadminForetagExpanded, setSuperadminForetagExpanded] = useState(false);
+  const [companyContextMenu, setCompanyContextMenu] = useState({ visible: false, x: 0, y: 0, company: null });
+  /** Tydlig loadingskärm vid "Radera företag" – { companyName } när purge pågår, null annars. */
+  const [purgeCompanyLoading, setPurgeCompanyLoading] = useState(null);
+  /** Modal för inaktiva faser (Produktion, Avslutat, Eftermarknad) – visar "Under uppbyggnad". */
+  const [inactivePhaseModal, setInactivePhaseModal] = useState(null); // 'produktion' | 'avslut' | 'eftermarknad' | null
+  /** Modal för SharePoint Nav (Superadmin) – ny layout. */
+  const [sharePointNavModalVisible, setSharePointNavModalVisible] = useState(false);
+  /** Aktiv planeringsflik (namn) – visas i MinimalTopbar som itemLabel när rail är planering. */
+  const [planeringActiveTabName, setPlaneringActiveTabName] = useState('');
+
+  useModalKeyboard(sharePointNavModalVisible, () => setSharePointNavModalVisible(false));
+
+  // Panel-bredd, collapse och resize-hantering (vänster/höger) – måste vara före alla useEffect som använder leftWidth/rightWidth
+  const {
+    leftWidth,
+    setLeftWidth,
+    leftPanelCollapsed,
+    setLeftPanelCollapsed,
+    effectiveLeftWidth,
+    rightWidth,
+    panResponder,
+    panResponderRight,
+    leftResizeHandlers,
+    rightResizeHandlers,
+  } = useHomePaneResizing();
+
+  const {
+    openCustomersModal,
+    openContactRegistryModal,
+    openSuppliersModal,
+    openByggdelModal,
+    openKontoplanModal,
+    openMallarModal,
+    openAIPromptsModal,
+    openKategoriModal,
+    openCompanyModal,
+    openCreateCompanyModal,
+    isAnyModalOpen,
+  } = useContext(AdminModalContext) || {};
+
+  // When a Register/Admin modal closes (ESC/X), clear the side-panel selection
+  // so the left panel does not keep an item highlighted.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (isAnyModalOpen) return;
+
+    // Only clear when we're in these rail modules and a key is currently selected.
+    if (!activeSidePanelItemKey) return;
+    if (!['register', 'administration', 'superadmin'].includes(String(railActiveId || ''))) return;
+
+    setActiveSidePanelItemKey(null);
+  }, [isAnyModalOpen, activeSidePanelItemKey, railActiveId]);
+
+  const getEffectiveCompanyIdForRegister = useCallback(async () => {
+    const fromProps = String(companyId || route?.params?.companyId || '').trim();
+    if (fromProps) return fromProps;
+    try {
+      const user = auth?.currentUser;
+      if (user && typeof user.getIdTokenResult === 'function') {
+        const tokenRes = await user.getIdTokenResult(false).catch(() => null);
+        const cid = String(tokenRes?.claims?.companyId || '').trim();
+        if (cid) return cid;
+      }
+    } catch (_e) {}
+    return '';
+  }, [auth, companyId, route?.params?.companyId]);
+
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const user = auth?.currentUser;
+        const rawEmail = String(user?.email || '').toLowerCase();
+        const isEmailSuperadmin = rawEmail === 'marcus@msbyggsystem.se' || rawEmail === 'marcus.skogh@msbyggsystem.se' || rawEmail === 'marcus.skogh@msbyggsystem.com' || rawEmail === 'marcus.skogh@msbyggsystem';
+        let tokenRes = null;
+        try { tokenRes = await user?.getIdTokenResult(false).catch(() => null); } catch (_e) { tokenRes = null; }
+        const claims = tokenRes?.claims || {};
+        const isSuperClaim = !!(claims.superadmin === true || claims.role === 'superadmin');
+        if (mounted) setIsSuperAdminResolved(!!(isEmailSuperadmin || isSuperClaim));
+      } catch (_e) {
+        if (mounted) setIsSuperAdminResolved(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [auth]);
+
+  // Hämta företagslistan när Superadmin är valt i rail (för expanderbar Företag)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || railActiveId !== 'superadmin' || !isSuperAdminResolved) return;
+    let mounted = true;
+    fetchCompanies().then((list) => {
+      if (mounted && Array.isArray(list)) setSuperadminCompanies(list);
+    }).catch(() => { if (mounted) setSuperadminCompanies([]); });
+    return () => { mounted = false; };
+  }, [railActiveId, isSuperAdminResolved]);
+
+  const handleRegisterItemPress = useCallback(async (item) => {
+    setActiveSidePanelItemKey(item.key);
+    try {
+      const cid = await getEffectiveCompanyIdForRegister();
+      if (item.route === 'ContactRegistry') {
+        if (openContactRegistryModal) openContactRegistryModal(cid);
+        else navigation.navigate('ContactRegistry', { companyId: cid, allCompanies: !!isSuperAdminResolved });
+      } else if (item.route === 'Suppliers') {
+        if (openSuppliersModal) openSuppliersModal(cid);
+        else navigation.navigate('Suppliers', { companyId: cid });
+      } else if (item.route === 'Customers') {
+        if (openCustomersModal) openCustomersModal(cid);
+        else navigation.navigate('Customers', { companyId: cid });
+      } else if (item.openModal === 'openMallarModal') {
+        if (openMallarModal) openMallarModal(cid);
+      } else if (item.route === 'ManageCompany' && item.focus) {
+        if (item.focus === 'byggdel') {
+          if (openByggdelModal) openByggdelModal(cid);
+          else if (openCompanyModal) openCompanyModal(cid, 'register');
+        } else if (item.focus === 'kontoplan') {
+          if (openKontoplanModal) openKontoplanModal(cid);
+          else if (openCompanyModal) openCompanyModal(cid, 'register');
+        } else if (item.focus === 'kategorier') {
+          if (openKategoriModal) openKategoriModal(cid);
+          else if (openCompanyModal) openCompanyModal(cid, 'register');
+        } else if (openCompanyModal) {
+          openCompanyModal(cid, item.focus);
+        }
+      }
+    } catch (_e) {}
+  }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved, openContactRegistryModal, openSuppliersModal, openCustomersModal, openMallarModal, openByggdelModal, openKontoplanModal, openKategoriModal, openCompanyModal]);
+
+  const handleAdminItemPress = useCallback(async (item) => {
+    if (item.key === 'planering') {
+      try {
+        const cid = await getEffectiveCompanyIdForRegister();
+        if (openCompanyModal && cid) openCompanyModal(cid, 'planering');
+        else setRailActiveId('planering');
+      } catch (_e) {
+        setRailActiveId('planering');
+      }
+      return;
+    }
+    if (item.route !== 'ManageSharePointNavigation') {
+      setActiveSidePanelItemKey(item.key);
+    }
+    try {
+      const cid = await getEffectiveCompanyIdForRegister();
+      if (item.route === 'ManageUsers') {
+        if (openCompanyModal && cid) openCompanyModal(cid, 'anvandare');
+        else navigation.navigate('ManageUsers', { companyId: cid });
+      } else if (item.route === 'ManageControlTypes') {
+        if (openMallarModal) openMallarModal(cid);
+        else navigation.navigate('ManageControlTypes', { companyId: cid });
+      } else if (item.key === 'integrationer' || (item.route === 'ManageCompany' && item.focus === 'sharepoint')) {
+        if (openCompanyModal) openCompanyModal(cid, 'sharepoint');
+      } else if (item.key === 'foretagsinstallningar' || (item.route === 'ManageCompany' && !item.focus)) {
+        if (openCompanyModal) openCompanyModal(cid);
+      } else if (item.route === 'ManageCompany') {
+        if (openCompanyModal) openCompanyModal(cid);
+      } else if (item.route === 'ManageSharePointNavigation') {
+        setActiveSidePanelItemKey(null);
+        setSharePointNavModalVisible(true);
+        return;
+      }
+    } catch (_e) {}
+  }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved, openCompanyModal, openMallarModal]);
+
+  const handleSharePointItemPress = useCallback(async (item) => {
+    setActiveSidePanelItemKey(item.key);
+    try {
+      const cid = await getEffectiveCompanyIdForRegister();
+      navigation.navigate('ManageSharePointNavigation', { companyId: cid, ...(item.params || {}) });
+    } catch (_e) {}
+  }, [getEffectiveCompanyIdForRegister, navigation]);
+
+  // Prenumeration på företagets projekt (samma lista som i vänsterpanelen – alla siter företaget har tillgång till).
+  React.useEffect(() => {
+    const cid = String(companyId || '').trim();
+    if (!cid) {
+      setCompanyProjects([]);
+      return () => {};
+    }
+    const unsub = subscribeCompanyProjects(cid, { siteRole: 'projects' }, (list) => {
+      const active = (list || []).filter((p) => String(p?.status || '').trim().toLowerCase() !== 'archived');
+      setCompanyProjects(active);
+    });
+    return () => {
+      try { unsub(); } catch (_e) {}
+    };
+  }, [companyId]);
 
   // Inloggnings-/activity-effekter (login-logg + company members) extraherade till useHomeUserActivity
   useHomeUserActivity({ companyId, routeCompanyId, authClaims });
 
-  // Auto-refresh av SharePoint-hierarkin på webben (polling)
-  React.useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const interval = setInterval(() => {
-      setHierarchyReloadKey((k) => k + 1);
-    }, 60000); // var 60:e sekund
-    return () => clearInterval(interval);
-  }, []);
+  // Vänsterpanelen uppdateras endast när användaren klickar på Uppdatera-knappen (ingen auto-polling).
 
   // Refresh SharePoint metadata/hierarchy when a project updates its phase metadata.
   React.useEffect(() => {
@@ -372,6 +595,13 @@ export default function HomeScreen({ navigation, route }) {
   // expandedProjects och projektval hanteras av useHomeTreeInteraction / useHomeProjectSelection
   const [projectControlsRefreshNonce, setProjectControlsRefreshNonce] = useState(0);
 
+  // Phase navigation + module routing (måste definieras före useHomeProjectSelection)
+  const [phaseActiveSection, setPhaseActiveSection] = useState(null);
+  const [phaseActiveItem, setPhaseActiveItem] = useState(null);
+  const [phaseActiveNode, setPhaseActiveNode] = useState(null);
+  const [phaseHeaderLabels, setPhaseHeaderLabels] = useState({ sectionLabel: '', itemLabel: '' });
+  const [projectModuleRoute, setProjectModuleRoute] = useState(null);
+
   // Projektval + inline-editor centraliseras i useHomeProjectSelection
   const {
     selectedProject,
@@ -399,6 +629,10 @@ export default function HomeScreen({ navigation, route }) {
     closeInlineControlEditor,
     handleInlineControlFinished,
     handleInlineViewChange,
+    leaveProjectModalVisible,
+    leaveProjectCurrentLabel,
+    confirmLeaveProject,
+    cancelLeaveProject,
   } = useHomeProjectSelection({
     showAlert,
     resetProjectFields,
@@ -409,23 +643,140 @@ export default function HomeScreen({ navigation, route }) {
     newProjectNumber,
     setNewProjectNumber,
     setProjectControlsRefreshNonce,
+    setPhaseActiveSection,
+    setPhaseActiveItem,
+    setProjectModuleRoute,
   });
 
-  const [syncStatus, setSyncStatus] = useState('idle');
-  
-  // Phase navigation state (for PhaseLeftPanel in leftpanel)
-  const [phaseActiveSection, setPhaseActiveSection] = useState(null);
-  const [phaseActiveItem, setPhaseActiveItem] = useState(null);
-  const [phaseActiveNode, setPhaseActiveNode] = useState(null);
+  // Leave-project confirmation should only happen for:
+  // - Home (dashboard)
+  // - Logout
+  // - Switching project (handled inside useHomeProjectSelection)
+  const PHASE_SHORTCUT_IDS = ['kalkylskede', 'produktion', 'avslut', 'eftermarknad', 'planering'];
 
-  // Project module routing (web): decouple Offerter from kalkylskede PhaseLayout.
-  // When moduleId === 'offerter', WebMainPane renders OfferterLayout.
-  const [projectModuleRoute, setProjectModuleRoute] = useState(null); // { moduleId, itemId }
+  const [pendingLeaveAction, setPendingLeaveAction] = useState(null);
+
+  const performLogout = useCallback(async () => {
+    try { await AsyncStorage.removeItem('dk_companyId'); } catch (_e) {}
+    try { await auth.signOut(); } catch (_e) {}
+    try {
+      navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+    } catch (_e) {
+      try { navigation.navigate('Login'); } catch (__e) {}
+    }
+  }, [auth, navigation]);
+
+  const requestLogout = useCallback(() => {
+    if (Platform.OS === 'web' && selectedProject) {
+      setPendingLeaveAction({ type: 'logout' });
+      closeSelectedProject();
+      return;
+    }
+    void performLogout();
+  }, [closeSelectedProject, performLogout, selectedProject]);
+
+  // Allow other web menus (e.g. header) to request logout and have HomeScreen
+  // enforce the "leave project first" confirmation.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    const handler = () => {
+      try { requestLogout(); } catch (_e) {}
+    };
+    try { window.addEventListener('dkRequestLogout', handler); } catch (_e) {}
+    return () => {
+      try { window.removeEventListener('dkRequestLogout', handler); } catch (_e) {}
+    };
+  }, [requestLogout]);
+
+  const cancelLeaveProjectWithPendingClear = useCallback(() => {
+    setPendingLeaveAction(null);
+    cancelLeaveProject?.();
+  }, [cancelLeaveProject]);
+
+  const confirmLeaveProjectWithPendingApply = useCallback(() => {
+    const action = pendingLeaveAction;
+    setPendingLeaveAction(null);
+    confirmLeaveProject?.();
+
+    if (!action) return;
+    setTimeout(() => {
+      try {
+        if (action.type === 'logout') {
+          void performLogout();
+          return;
+        }
+        if (action.type === 'rail' && action.railId === 'dashboard') {
+          setActiveSidePanelItemKey(null);
+          setRailActiveId('dashboard');
+          setAppMode('dashboard');
+          setSidePanelCollapsed(true);
+        }
+      } catch (_e) {}
+    }, 0);
+  }, [confirmLeaveProject, pendingLeaveAction, performLogout]);
+
+  useModalKeyboard(leaveProjectModalVisible, cancelLeaveProjectWithPendingClear, confirmLeaveProjectWithPendingApply);
+
+  const [syncStatus, setSyncStatus] = useState('idle');
+
+  const onPhaseHeaderLabels = useCallback(({ sectionLabel = '', itemLabel = '' } = {}) => {
+    setPhaseHeaderLabels((prev) => (
+      prev.sectionLabel === sectionLabel && prev.itemLabel === itemLabel
+        ? prev
+        : { sectionLabel, itemLabel }
+    ));
+  }, []);
 
   // AF (Administrativa föreskrifter) explorer state (used to mirror folder contents in left panel).
   const [afRelativePath, setAfRelativePath] = useState('');
   const [afSelectedItemId, setAfSelectedItemId] = useState(null);
   const [afMirrorRefreshNonce, setAfMirrorRefreshNonce] = useState(0);
+
+  // Notiser (för banner-dropdown; tidigare i WebMainPane som högerpanel)
+  const [userNotifications, setUserNotifications] = useState([]);
+  const [notificationsError, setNotificationsError] = useState(null);
+  const effectiveCompanyIdForNotif = (companyId != null && String(companyId).trim()) ? String(companyId).trim() : (routeCompanyId != null && String(routeCompanyId).trim()) ? String(routeCompanyId).trim() : (authClaims?.companyId != null && String(authClaims.companyId).trim()) ? String(authClaims.companyId).trim() : '';
+  const currentUserId = auth?.currentUser?.uid ?? null;
+  React.useEffect(() => {
+    if (!effectiveCompanyIdForNotif || !currentUserId) {
+      setUserNotifications([]);
+      setNotificationsError(null);
+      return () => {};
+    }
+    setNotificationsError(null);
+    const unsub = subscribeUserNotifications(effectiveCompanyIdForNotif, currentUserId, {
+      onData: (list) => {
+        setUserNotifications(Array.isArray(list) ? list : []);
+        setNotificationsError(null);
+      },
+      onError: (err) => {
+        setUserNotifications([]);
+        const msg = err?.message || '';
+        const isPermission = msg.toLowerCase().includes('permission') || err?.code === 'permission-denied';
+        setNotificationsError(
+          isPermission
+            ? 'Behörighet saknas. Deploya regler: firebase deploy --only firestore:rules. Logga sedan ut och in igen.'
+            : (msg || 'Kunde inte ladda notiser')
+        );
+      },
+      limitCount: 30,
+    });
+    return () => { try { unsub?.(); } catch (_e) {} };
+  }, [effectiveCompanyIdForNotif, currentUserId]);
+  const notificationsUnreadCount = userNotifications.filter((n) => !n?.read).length;
+  const [markAllAsReadLoading, setMarkAllAsReadLoading] = useState(false);
+  const handleMarkAllNotificationsAsRead = React.useCallback(async () => {
+    const unread = userNotifications.filter((n) => !n?.read);
+    if (unread.length === 0) return;
+    setMarkAllAsReadLoading(true);
+    try {
+      await markAllNotificationsAsRead(unread);
+    } catch (_e) {}
+    finally {
+      setMarkAllAsReadLoading(false);
+    }
+  }, [userNotifications]);
 
   const derivePhaseKeyFromProjectRootPath = React.useCallback((rootPath) => {
     const p = String(rootPath || '').trim().replace(/^\/+/, '');
@@ -778,6 +1129,85 @@ export default function HomeScreen({ navigation, route }) {
     }
   }, [phaseNavigation, phaseActiveSection]);
 
+  // Sync phase state when projectModuleRoute has offerter (e.g. from URL or browser back)
+  React.useEffect(() => {
+    if (selectedProject && projectModuleRoute?.moduleId === 'offerter') {
+      const itemId = String(projectModuleRoute?.itemId || '').trim() || 'forfragningar';
+      const normalized = (v) => {
+        if (!v) return 'forfragningar';
+        if (v === 'inkomna-offerter' || v === '02-offerter' || v === '02_offerter') return 'offerter';
+        return v;
+      };
+      setPhaseActiveSection('offerter');
+      setPhaseActiveItem(normalized(itemId));
+    }
+  }, [selectedProject?.id, projectModuleRoute?.moduleId, projectModuleRoute?.itemId]);
+
+  // Ensure Offerter always uses the standalone module route (avoid two parallel "modes")
+  // and default to last used subtab (per project) when entering the section.
+  React.useEffect(() => {
+    if (!selectedProject || !selectedProject.id) return;
+
+    const normalizeOfferterItemId = (raw) => {
+      const v = String(raw || '').trim();
+      if (!v) return 'forfragningar';
+      if (v === 'inkomna-offerter' || v === '02-offerter' || v === '02_offerter') return 'offerter';
+      return v;
+    };
+
+    const cid = (companyId != null) ? String(companyId).trim() : '';
+    const pid = String(selectedProject.id).trim();
+    const storageKey = (cid && pid) ? `dk_offerter_last_item:${cid}:${pid}` : null;
+
+    const readRememberedItem = () => {
+      try {
+        if (!storageKey) return '';
+        if (Platform.OS !== 'web') return '';
+        if (typeof window === 'undefined' || !window.localStorage) return '';
+        const v = window.localStorage.getItem(storageKey);
+        const normalized = normalizeOfferterItemId(v);
+        return normalized || '';
+      } catch (_e) {
+        return '';
+      }
+    };
+
+    const writeRememberedItem = (itemId) => {
+      try {
+        if (!storageKey) return;
+        if (Platform.OS !== 'web') return;
+        if (typeof window === 'undefined' || !window.localStorage) return;
+        const v = normalizeOfferterItemId(itemId);
+        if (!v) return;
+        window.localStorage.setItem(storageKey, v);
+      } catch (_e) {}
+    };
+
+    const isOfferterSection = String(phaseActiveSection || '').trim() === 'offerter';
+    const isOfferterRoute = String(projectModuleRoute?.moduleId || '').trim() === 'offerter';
+    const currentPhaseItem = String(phaseActiveItem || '').trim();
+
+    if (isOfferterSection) {
+      const desiredItem = currentPhaseItem
+        ? normalizeOfferterItemId(currentPhaseItem)
+        : (readRememberedItem() || 'forfragningar');
+      if (!currentPhaseItem || currentPhaseItem !== desiredItem) {
+        setPhaseActiveItem(desiredItem);
+      }
+      const currentRouteItem = normalizeOfferterItemId(projectModuleRoute?.itemId || '');
+      if (!isOfferterRoute || currentRouteItem !== desiredItem) {
+        setProjectModuleRoute({ moduleId: 'offerter', itemId: desiredItem });
+      }
+      writeRememberedItem(desiredItem);
+      return;
+    }
+
+    // Only clear the offerter module route once phaseActiveSection is known and not offerter.
+    if (phaseActiveSection && isOfferterRoute) {
+      setProjectModuleRoute(null);
+    }
+  }, [companyId, selectedProject?.id, phaseActiveSection, phaseActiveItem, projectModuleRoute?.moduleId, projectModuleRoute?.itemId]);
+
   // Ladda SharePoint-mappar (funktioner) för valt projekt
   useHomeProjectFolders({
     companyId,
@@ -916,12 +1346,63 @@ export default function HomeScreen({ navigation, route }) {
     selectedProjectRef.current = selectedProject;
   }, [selectedProject]);
 
-  // Close dashboard dropdowns when navigating into a project (avoid leaving overlays open)
+  // Projekt-närvaro: sätt när användaren har ett projekt öppet, rensa när de lämnar (för varning vid radering).
+  const projectPresenceRef = React.useRef({ companyId: null, projectId: null });
+  React.useEffect(() => {
+    const cid = String(companyId || '').trim();
+    const uid = auth?.currentUser?.uid ?? null;
+    const prev = projectPresenceRef.current;
+    if (selectedProject?.id && cid && uid) {
+      const pid = String(selectedProject.id).trim();
+      const displayName = auth?.currentUser?.displayName || auth?.currentUser?.email || null;
+      if (prev.companyId && prev.projectId && (prev.companyId !== cid || prev.projectId !== pid)) {
+        clearProjectPresence(prev.companyId, prev.projectId, uid).catch(() => {});
+      }
+      projectPresenceRef.current = { companyId: cid, projectId: pid };
+      setProjectPresence(cid, pid, uid, displayName).catch(() => {});
+    } else {
+      if (prev.companyId && prev.projectId && uid) {
+        clearProjectPresence(prev.companyId, prev.projectId, uid).catch(() => {});
+      }
+      projectPresenceRef.current = { companyId: null, projectId: null };
+    }
+  }, [companyId, selectedProject?.id, auth?.currentUser?.uid, auth?.currentUser?.displayName, auth?.currentUser?.email]);
+
+  // Web 2026: när ett projekt öppnas (dashboard eller tree) → projektläge
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (!selectedProject?.id) return;
+
+    // Do not force project-mode for the left panel when the user is intentionally
+    // browsing global modules (SharePoint sites/phase lists, Register, Admin, etc.).
+    if (
+      railActiveId === 'sharepoint' ||
+      PHASE_SHORTCUT_IDS.includes(String(railActiveId || '')) ||
+      ['register', 'administration', 'superadmin'].includes(String(railActiveId || ''))
+    ) {
+      return;
+    }
+
+    setAppMode('project');
+  }, [selectedProject?.id, railActiveId, PHASE_SHORTCUT_IDS]);
+
+  // Dashboard right panel: smooth collapse/expand (220ms ease), expanded width = rightWidth
+  React.useEffect(() => {
+    Animated.timing(dashboardRightPanelWidthAnim, {
+      toValue: dashboardRightPanelCollapsed ? 0 : rightWidth,
+      duration: 220,
+      easing: Easing.bezier(0.25, 0.1, 0.25, 1),
+      useNativeDriver: false,
+    }).start();
+  }, [dashboardRightPanelCollapsed, dashboardRightPanelWidthAnim, rightWidth]);
+
+  // Close dashboard dropdowns and right panel when navigating into a project (avoid leaving overlays/panel open)
   React.useEffect(() => {
     try {
       setDashboardFocus(null);
       setDashboardDropdownTop(null);
       setDashboardHoveredStatKey(null);
+      if (selectedProject) setDashboardRightPanelCollapsed(true);
     } catch (e) {}
   }, [selectedProject]);
 
@@ -1047,6 +1528,27 @@ export default function HomeScreen({ navigation, route }) {
     controlTypeOptions,
   } = useCompanyControlTypes({ companyId });
 
+  // Aktiva moduler för företaget – styr synlighet i rail och dashboard-kort (Företagsinställningar → Moduler)
+  const PHASE_RAIL_AND_CARD_KEYS = useMemo(() => ['kalkylskede', 'produktion', 'avslut', 'eftermarknad', 'planering'], []);
+  const enabledPhaseKeys = useMemo(() => {
+    const raw = companyProfile?.enabledPhases;
+    if (Array.isArray(raw)) {
+      return raw.filter((k) => PHASE_RAIL_AND_CARD_KEYS.includes(String(k).trim()));
+    }
+    // Företag utan fält (äldre) behåller alla faser; nya företag har enabledPhases: [] från start
+    return PHASE_RAIL_AND_CARD_KEYS;
+  }, [companyProfile?.enabledPhases, PHASE_RAIL_AND_CARD_KEYS]);
+
+  // När företagets aktiva moduler ändras: om valt rail-fas inte längre är aktiv, gå till dashboard
+  React.useEffect(() => {
+    const id = String(railActiveId || '').trim();
+    if (!id || !PHASE_RAIL_AND_CARD_KEYS.includes(id)) return;
+    if (Array.isArray(enabledPhaseKeys) && enabledPhaseKeys.length > 0 && !enabledPhaseKeys.includes(id)) {
+      setRailActiveId('dashboard');
+      setAppMode('dashboard');
+    }
+  }, [enabledPhaseKeys, railActiveId]);
+
   // Ny SharePoint-baserad projektmodal (CreateProjectModal)
   const {
     visible: createProjectVisible,
@@ -1056,6 +1558,163 @@ export default function HomeScreen({ navigation, route }) {
     closeModal: closeCreateProjectModal,
     handleCreateProject,
   } = useCreateSharePointProjectModal({ companyId });
+
+  // Redigera projekt (samma modal som skapa, men pre-fylld)
+  const [editProject, setEditProject] = useState(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const editProjectPayloadRef = useRef(null);
+  const openEditProjectModal = useCallback((project) => {
+    const data = project != null && typeof project === 'object' ? project : editProjectPayloadRef.current;
+    if (!data || typeof data !== 'object') return;
+    const hasAnyId = Boolean(String(data.projectId ?? data.projectNumber ?? data.id ?? '').trim());
+    const hasAnyName = Boolean(String(data.projectName ?? data.name ?? data.fullName ?? '').trim());
+    if (!hasAnyId && !hasAnyName) return;
+    editProjectPayloadRef.current = null;
+    const num = String(data.projectNumber ?? data.number ?? data.projectId ?? data.id ?? '').trim();
+    const name = String(data.projectName ?? data.name ?? data.fullName ?? '').trim();
+    const fullNameStr = String(data.fullName ?? data.projectName ?? data.name ?? '').trim();
+    const fallback = {
+      projectId: data.projectId || data.projectNumber || data.id || num,
+      projectNumber: num,
+      projectName: name || fullNameStr || num,
+      fullName: fullNameStr || name || num,
+      sharePointSiteId: data.sharePointSiteId || data.siteId,
+      rootFolderPath: String(data.rootFolderPath ?? data.path ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, ''),
+      phase: data.phase || DEFAULT_PHASE,
+    };
+    setEditProject(fallback);
+    const pid = String(data.projectId || data.projectNumber || data.id || '').trim();
+    if (pid && companyId) {
+      fetchCompanyProject(companyId, pid)
+        .then((full) => {
+          if (!full) return;
+          const fromApi = {
+            projectId: full.projectId || full.id || full.projectNumber || fallback.projectId,
+            projectNumber: String(full.projectNumber ?? full.number ?? full.id ?? '').trim() || fallback.projectNumber,
+            projectName: String(full.projectName ?? full.name ?? full.fullName ?? '').trim() || fallback.projectName,
+            fullName: String(full.fullName ?? full.projectName ?? full.name ?? '').trim() || fallback.fullName,
+            sharePointSiteId: full.sharePointSiteId || full.siteId || fallback.sharePointSiteId,
+            rootFolderPath: String(full.rootFolderPath ?? full.path ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, '') || fallback.rootFolderPath,
+            phase: full.phase || fallback.phase || DEFAULT_PHASE,
+          };
+          setEditProject(fromApi);
+        })
+        .catch(() => {});
+    }
+  }, [companyId]);
+  const closeEditProjectModal = useCallback(() => {
+    setEditProject(null);
+    setIsSavingEdit(false);
+  }, []);
+  const handleEditProjectSave = useCallback(async (payload) => {
+    if (!companyId || !payload?.projectId) return;
+    setIsSavingEdit(true);
+    try {
+      const projectId = String(payload.projectId).trim();
+      const newNumber = String(payload.projectNumber || '').trim();
+      const newName = String(payload.projectName || '').trim();
+      const rawNewRoot = String(payload.rootFolderPath || payload.parentFolderPath || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+      const destSiteId = normalizeSiteIdForGraph(String(payload.siteId || payload.sharePointSiteId || '').trim());
+      const sourceSiteId = normalizeSiteIdForGraph(String(payload.initialSharePointSiteId || '').trim());
+      const siteId = destSiteId; // används nedan för Firestore/SharePoint-metadata
+      const oldRootPath = String(payload.initialRootFolderPath || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+      const newFolderName = formatSharePointProjectFolderName(newNumber, newName);
+      const oldFolderName = oldRootPath.split('/').filter(Boolean).pop() || '';
+      const oldParentPath = oldRootPath.split('/').filter(Boolean).slice(0, -1).join('/');
+      let finalRootPath = oldRootPath;
+      let didMove = false;
+      const crossSiteMove = sourceSiteId && destSiteId && sourceSiteId !== destSiteId;
+
+      // rawNewRoot = målmappen (parent) där projektet ska ligga; oldRootPath = nuvarande full sökväg till projektmappen
+      const storagePathChanged = (rawNewRoot != null || crossSiteMove) && oldRootPath &&
+        (crossSiteMove || (
+          rawNewRoot.trim() !== oldRootPath.trim() &&
+          rawNewRoot.trim() !== oldParentPath
+        )); // samma site + samma parent = ingen flytt
+
+      if (storagePathChanged && oldRootPath) {
+        try {
+          if (crossSiteMove) {
+            await moveDriveItemAcrossSitesByPath({
+              sourceSiteId,
+              sourcePath: oldRootPath,
+              destSiteId,
+              destParentPath: rawNewRoot || '',
+              destName: newFolderName,
+            });
+            finalRootPath = rawNewRoot ? (rawNewRoot.replace(/\/+$/, '') + '/' + newFolderName).replace(/\/+/g, '/') : newFolderName;
+          } else if (destSiteId) {
+            await moveDriveItemByPath(destSiteId, oldRootPath, rawNewRoot);
+            finalRootPath = (rawNewRoot.replace(/\/+$/, '') + '/' + oldFolderName).replace(/\/+/g, '/');
+            if (oldFolderName !== newFolderName) {
+              await renameDriveItemByPath(destSiteId, finalRootPath, newFolderName);
+              finalRootPath = (rawNewRoot.replace(/\/+$/, '') + '/' + newFolderName).replace(/\/+/g, '/');
+            }
+          }
+        } catch (e) {
+          const msg = (e && (e.message || e.errorDescription || String(e))) || 'Okänt fel';
+          console.warn('[HomeScreen] Move project folder:', msg);
+          throw new Error(
+            typeof msg === 'string' && msg.includes('flytta') ? msg : `Kunde inte flytta projektmappen i SharePoint. ${msg}`
+          );
+        }
+        didMove = true;
+      } else if (destSiteId && oldRootPath && newFolderName && oldFolderName !== newFolderName) {
+        try {
+          await renameDriveItemByPath(siteId, oldRootPath, newFolderName);
+          const parentPath = oldRootPath.split('/').filter(Boolean).slice(0, -1).join('/');
+          finalRootPath = parentPath ? `${parentPath}/${newFolderName}` : newFolderName;
+        } catch (e) {
+          console.warn('[HomeScreen] Rename project folder after edit:', e?.message || e);
+        }
+      }
+
+      const newFullName = formatSharePointProjectFolderName(newNumber, newName);
+      const patchData = {
+        projectNumber: newNumber,
+        projectName: newName,
+        fullName: newFullName,
+        rootFolderPath: finalRootPath,
+      };
+      if (didMove && destSiteId) {
+        patchData.sharePointSiteId = destSiteId;
+      }
+      await patchCompanyProject(companyId, projectId, patchData);
+      // Only sync ProjectNumber/ProjectName to SharePoint when name/number changed (avoids 400 if library lacks those columns when only moving)
+      const initialFolderName = oldRootPath.split('/').filter(Boolean).pop() || '';
+      const initialNum = (initialFolderName.split(' - ')[0] || '').trim();
+      const initialName = (initialFolderName.split(' - ').slice(1).join(' - ') || '').trim();
+      const didRename = newNumber !== initialNum || newName !== initialName;
+      if (siteId && finalRootPath && didRename) {
+        try {
+          await updateSharePointProjectPropertiesFromFirestoreProject(companyId, {
+            projectId,
+            projectNumber: newNumber,
+            projectName: newName,
+            sharePointSiteId: siteId,
+            rootFolderPath: finalRootPath,
+          });
+        } catch (e) {
+          console.warn('[HomeScreen] SharePoint project properties update after edit:', e?.message || e);
+        }
+      }
+      setHierarchyReloadKey((k) => k + 1);
+      setProjectsListRefreshKey((k) => k + 1);
+      setEditProject(null);
+      if (didMove && Platform.OS === 'web' && typeof window !== 'undefined') {
+        try { window.alert('Projektet har flyttats i SharePoint och sparats.'); } catch (_) {}
+      }
+    } catch (e) {
+      const errMsg = (e && (e.message || e.errorDescription || String(e))) || 'Kunde inte spara projektet.';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        try { window.alert(errMsg); } catch (_) {}
+      } else {
+        Alert.alert('Fel', errMsg);
+      }
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }, [companyId]);
 
   // Dashboard: centralised state and logic
   const {
@@ -1070,6 +1729,7 @@ export default function HomeScreen({ navigation, route }) {
     dashboardControlsToSignItems,
     dashboardOpenDeviationItems,
     dashboardUpcomingSkyddsrondItems,
+    dashboardUpcomingTimelineItems,
     dashboardDropdownAnchor,
     dashboardDropdownTop,
     dashboardDropdownRowKey,
@@ -1092,6 +1752,7 @@ export default function HomeScreen({ navigation, route }) {
     routeCompanyId,
     authClaims,
     currentUserId: auth?.currentUser?.uid || null,
+    currentUserEmail: auth?.currentUser?.email || null,
     hierarchy,
     hierarchyRef,
     selectedProject,
@@ -1101,14 +1762,6 @@ export default function HomeScreen({ navigation, route }) {
 
   // start background sync hook
   useBackgroundSync(companyId, { onStatus: (s) => setSyncStatus(s) });
-
-  // Panel-bredd och resize-hantering (vänster/höger)
-  const {
-    leftWidth,
-    rightWidth,
-    panResponder,
-    panResponderRight,
-  } = useHomePaneResizing();
 
   // SharePoint-hierarki laddas nu via useSharePointHierarchy-hooken ovan
 
@@ -1128,7 +1781,17 @@ export default function HomeScreen({ navigation, route }) {
   }, []);
   // Sökpopup + keyboard/scroll hanteras nu av useHomeSearchAndScroll
 
-  // Header search dropdown (between logos): search among created projects in hierarchy
+  // Header search dropdown (between logos / left panel): search among created projects
+  const onSelectProjectFromSearch = React.useCallback(
+    (proj) => {
+      requestProjectSwitch(proj, { selectedAction: null });
+      try {
+        navigation?.setParams?.({ headerSearchOpen: false, headerSearchKeepConnected: false });
+      } catch (_e) {}
+    },
+    [requestProjectSwitch, navigation]
+  );
+
   const {
     headerProjectQuery,
     headerSearchOpen,
@@ -1138,13 +1801,43 @@ export default function HomeScreen({ navigation, route }) {
     headerProjectMatches,
     hoveredProjectId,
     setHoveredProjectId,
+    selectedIndex,
+    setSelectedIndex,
     dropdownAnim,
-  } = useHomeHeaderProjectSearch({ route, navigation, hierarchy });
+  } = useHomeHeaderProjectSearch({
+    route,
+    navigation,
+    hierarchy,
+    searchableProjects: companyProjects,
+    onSelectProject: onSelectProjectFromSearch,
+  });
 
   // --- Safe-aliaser för render, så JSX aldrig kraschar på undefined ---
   const selectedProjectSafe = selectedProject ?? null;
   const projectPhaseKeySafe = projectPhaseKey ?? null;
   const hierarchySafe = Array.isArray(hierarchy) ? hierarchy : [];
+
+  // Rensa phase-header-labels när inget projekt är valt (används i MinimalTopbar).
+  useEffect(() => {
+    if (!selectedProjectSafe) {
+      setPhaseHeaderLabels({ sectionLabel: '', itemLabel: '' });
+    }
+  }, [selectedProjectSafe]);
+
+  // Rensa planeringsflik-namn när användaren lämnar Planering (används i MinimalTopbar).
+  useEffect(() => {
+    if (railActiveId !== 'planering') {
+      setPlaneringActiveTabName('');
+    }
+  }, [railActiveId]);
+
+  // När användaren går in i Planering: vänsterpanelen ska inte vara tillgänglig (håll stängd), högerpanelen stängs men kan öppnas igen.
+  useEffect(() => {
+    if (railActiveId === 'planering') {
+      setSidePanelCollapsed(true);
+      setDashboardRightPanelCollapsed(true);
+    }
+  }, [railActiveId]);
   const selectedProjectFoldersSafe = Array.isArray(selectedProjectFolders) ? selectedProjectFolders : [];
   const selectedProjectFoldersLoadingSafe = Boolean(selectedProjectFoldersLoading);
   const controlTypeOptionsSafe = Array.isArray(controlTypeOptions) ? controlTypeOptions : [];
@@ -1463,23 +2156,33 @@ export default function HomeScreen({ navigation, route }) {
         onClose={handleSimpleProjectSuccessClose}
       />
 
-      {/* Ny SharePoint-baserad "Skapa projekt"-modal för dashboard-knappen */}
+      {/* Ny SharePoint-baserad "Skapa projekt"-modal + redigera projekt (samma modal) */}
       <CreateProjectModal
-        visible={createProjectVisible}
-        onClose={closeCreateProjectModal}
+        key={editProject ? `edit-${editProject.projectId || editProject.projectNumber || 'unknown'}` : 'create'}
+        visible={createProjectVisible || !!editProject}
+        onClose={() => {
+          if (editProject) closeEditProjectModal();
+          else closeCreateProjectModal();
+        }}
         availableSites={createProjectSites}
         onCreateProject={handleCreateProject}
+        onSave={editProject ? handleEditProjectSave : undefined}
         isCreating={isCreatingProject}
+        isSaving={isSavingEdit}
         companyId={companyId}
+        initialProject={editProject}
       />
       
       {(() => {
-        const RootContainer = ImageBackground;
-        const rootContainerProps = {
-          source: require('../assets/images/inlogg.webb.png'),
-          resizeMode: 'cover',
-          imageStyle: { width: '100%', height: '100%' },
-        };
+        const isWeb = Platform.OS === 'web';
+        const RootContainer = isWeb ? View : ImageBackground;
+        const rootContainerProps = isWeb
+          ? {}
+          : {
+              source: require('../assets/images/inlogg.webb.png'),
+              resizeMode: 'cover',
+              imageStyle: { width: '100%', height: '100%' },
+            };
 
         return (
           <RootContainer
@@ -1487,19 +2190,9 @@ export default function HomeScreen({ navigation, route }) {
             style={{
               flex: 1,
               width: '100%',
-              ...(Platform.OS === 'web'
-                ? {
-                    minHeight: 0,
-                    height: '100vh',
-                    overflow: 'hidden',
-                  }
-                : {}),
+              ...(isWeb ? { minHeight: 0, height: '100vh', overflow: 'hidden' } : {}),
             }}
           >
-              <View
-                style={{ pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.12)', zIndex: 0 }}
-              />
-
             <HeaderSearchDropdown
               headerProjectQuery={headerProjectQuery}
               headerSearchOpen={headerSearchOpen}
@@ -1509,6 +2202,8 @@ export default function HomeScreen({ navigation, route }) {
               headerProjectMatches={headerProjectMatches}
               hoveredProjectId={hoveredProjectId}
               setHoveredProjectId={setHoveredProjectId}
+              selectedIndex={selectedIndex}
+              setSelectedIndex={setSelectedIndex}
               dropdownAnim={dropdownAnim}
               navigation={navigation}
               requestProjectSwitch={requestProjectSwitch}
@@ -1517,51 +2212,196 @@ export default function HomeScreen({ navigation, route }) {
             />
 
             {Platform.OS === 'web' ? (
-              <View style={{ flex: 1, backgroundColor: 'transparent', minHeight: 0, overflow: 'hidden' }}>
-                {/* Header */}
-                <HomeHeader
-                  headerHeight={headerHeight}
-                  setHeaderHeight={setHeaderHeight}
-                  navigation={navigation}
-                  route={route}
-                  auth={auth}
-                  selectedProject={selectedProjectSafe}
-                  isSuperAdmin={isSuperAdmin}
-                  allowedTools={allowedTools}
-                  showHeaderUserMenu={showHeaderUserMenu}
-                  canShowSupportToolsInHeader={canShowSupportToolsInHeader}
-                  supportMenuOpen={supportMenuOpen}
-                  setSupportMenuOpen={setSupportMenuOpen}
-                  companyId={companyId}
-                  routeCompanyId={routeCompanyId}
-                  showAdminButton={showAdminButton}
-                  adminActionRunning={adminActionRunning}
-                  localFallbackExists={localFallbackExists}
-                  handleMakeDemoAdmin={handleMakeDemoAdmin}
-                  refreshLocalFallbackFlag={refreshLocalFallbackFlag}
-                  dumpLocalRemoteControls={dumpLocalRemoteControls}
-                  showLastFsError={showLastFsError}
-                  saveControlToFirestore={saveControlToFirestore}
-                  saveDraftToFirestore={saveDraftToFirestore}
-                  searchSpinAnim={searchSpinAnim}
-                  sharePointStatus={sharePointStatus}
-                />
-
-                {/* Web: scroll ägs av HomeMainPaneContainer/WebMainPane (inte här) */}
+              <View style={{ flex: 1, minHeight: 0, overflow: 'hidden', height: windowHeight || '100vh' }}>
+                {/* Web 2026: IconRail | SecondarySidebar | MainContentArea (Topbar + PageContent), ingen blå banner */}
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'stretch', minHeight: 0, minWidth: 0 }}>
-                  <SharePointLeftPanel
+                  <IconRail
+                    activeId={railActiveId}
+                    onSelect={(id) => {
+                      if (id === 'produktion' || id === 'avslut' || id === 'eftermarknad') {
+                        setInactivePhaseModal(id);
+                        return;
+                      }
+
+                      // Toggle left panel when clicking the already active rail icon.
+                      // Exclusions: dashboard, inställningar, planering (panel ska inte gå att öppna i Planering)
+                      if (id === railActiveId && id !== 'dashboard' && id !== 'inställningar' && id !== 'planering') {
+                        setSidePanelCollapsed((c) => !c);
+                        return;
+                      }
+
+                      // Only Home should ask to leave the current project.
+                      if (selectedProject && id === 'dashboard') {
+                        setPendingLeaveAction({ type: 'rail', railId: 'dashboard' });
+                        closeSelectedProject();
+                        return;
+                      }
+
+                      setActiveSidePanelItemKey(null);
+                      setRailActiveId(id);
+                      if (id === 'dashboard') {
+                        setAppMode('dashboard');
+                        setSidePanelCollapsed(true);
+                        return;
+                      }
+
+                      // Planering: vänsterpanelen stängd (inte tillgänglig), högerpanelen stängs vid entré men kan öppnas igen.
+                      if (id === 'planering') {
+                        setSidePanelCollapsed(true);
+                        setDashboardRightPanelCollapsed(true);
+                        return;
+                      }
+
+                      // Auto-open left panel for all other rail items except Settings.
+                      if (id !== 'inställningar') {
+                        setSidePanelCollapsed(false);
+                      }
+
+                      if (id === 'sharepoint' || id === 'projekt') {
+                        setAppMode('sharepoint');
+                      }
+                    }}
+                    enabledPhaseKeys={enabledPhaseKeys}
+                    inactivePhaseIds={['produktion', 'avslut', 'eftermarknad']}
+                    showSuperadmin={isSuperAdminResolved}
+                    notificationsBadgeCount={notificationsUnreadCount || 0}
+                    userDisplayName={
+                      route?.params?.displayName
+                        || (auth?.currentUser && formatPersonName(auth.currentUser.displayName || auth.currentUser.email))
+                        || 'Användare'
+                    }
+                    onUserPress={showHeaderUserMenu ? (rect) => {
+                      setUserMenuPos({ x: Math.max(8, rect.x), y: (rect.y || 0) + (rect.height || 36) + 6 });
+                      setUserMenuVisible(true);
+                    } : undefined}
+                  />
+                  <ComingSoonPhaseModal
+                    visible={Boolean(inactivePhaseModal)}
+                    phase={inactivePhaseModal}
+                    onClose={() => setInactivePhaseModal(null)}
+                  />
+                  <Modal
+                    visible={leaveProjectModalVisible}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={cancelLeaveProjectWithPendingClear}
+                  >
+                    <Pressable
+                      style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
+                      onPress={cancelLeaveProjectWithPendingClear}
+                    >
+                      <Pressable
+                        style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, minWidth: 320, alignItems: 'stretch', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 }}
+                        onPress={(e) => e.stopPropagation()}
+                      >
+                        <Text style={{ fontSize: 18, fontWeight: '600', color: '#1e293b', marginBottom: 8 }}>
+                          Lämna projekt?
+                        </Text>
+                        <Text style={{ fontSize: 14, color: '#64748b', marginBottom: 20 }}>
+                          Vill du lämna {leaveProjectCurrentLabel || 'nuvarande projekt'}? Osparade ändringar kan gå förlorade.
+                        </Text>
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
+                          <TouchableOpacity
+                            onPress={cancelLeaveProjectWithPendingClear}
+                            style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, backgroundColor: '#f1f5f9' }}
+                          >
+                            <Text style={{ color: '#475569', fontSize: 14, fontWeight: '600' }}>Stanna kvar</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={confirmLeaveProjectWithPendingApply}
+                            style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, backgroundColor: '#1e293b' }}
+                          >
+                            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>Lämna</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </Pressable>
+                    </Pressable>
+                  </Modal>
+                  <Modal
+                    visible={sharePointNavModalVisible}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => setSharePointNavModalVisible(false)}
+                    statusBarTranslucent
+                  >
+                    <ManageSharePointNavigation
+                      navigation={navigation}
+                      route={{ params: {} }}
+                      embedInModal
+                      onClose={() => setSharePointNavModalVisible(false)}
+                    />
+                  </Modal>
+                  <GlobalSidePanel
+                    collapsed={railActiveId === 'planering' ? true : sidePanelCollapsed}
+                    onCollapseChange={railActiveId === 'planering' ? undefined : setSidePanelCollapsed}
+                    showCollapseButton={railActiveId !== 'planering'}
+                    visible
                     leftWidth={leftWidth}
+                    setLeftWidth={setLeftWidth}
+                    panResponder={sidePanelCollapsed ? null : panResponder}
+                    resizeHandlers={sidePanelCollapsed ? null : leftResizeHandlers}
+                  >
+                    {(railActiveId === 'dashboard' || railActiveId === 'notiser') && appMode !== 'project' ? (
+                      <View style={{ flex: 1, minHeight: 0 }}>
+                        <LeftPanelRailHeader title="Startsida" />
+                        <View style={{ padding: 16, paddingTop: 12 }}>
+                          <Text style={{ fontSize: 12, color: '#94a3b8' }}>Översikt och senaste aktiviteter visas i innehållsområdet.</Text>
+                        </View>
+                      </View>
+                    ) : (railActiveId === 'register' || railActiveId === 'administration' || railActiveId === 'superadmin') ? (
+                      <GlobalSidePanelContent
+                        activeModule={railActiveId}
+                        activeRouteName={navigation.getState?.()?.routes?.[navigation.getState?.()?.index]?.name}
+                        activeItemKey={activeSidePanelItemKey}
+                        onNavigateRegister={handleRegisterItemPress}
+                        onNavigateAdmin={handleAdminItemPress}
+                        onNavigateSharePoint={handleSharePointItemPress}
+                        superadminCompanies={railActiveId === 'superadmin' ? superadminCompanies : []}
+                        superadminForetagExpanded={superadminForetagExpanded}
+                        onSuperadminForetagToggle={() => setSuperadminForetagExpanded((prev) => !prev)}
+                        onSuperadminCompanyClick={(company) => openCompanyModal?.(company?.id)}
+                        onSuperadminCompanyContextMenu={(e, company) => {
+                          const x = (e?.clientX != null) ? e.clientX : 0;
+                          const y = (e?.clientY != null) ? e.clientY : 0;
+                          setCompanyContextMenu({ visible: true, x, y, company });
+                        }}
+                        onSuperadminAddCompany={() => {
+                          openCreateCompanyModal?.();
+                        }}
+                      />
+                    ) : railActiveId === 'planering' ? (
+                      <View style={{ flex: 1, minHeight: 0 }}>
+                        <LeftPanelRailHeader title="Planering" />
+                        <View style={{ padding: 16, paddingTop: 12 }}>
+                          <Text style={{ fontSize: 12, color: '#94a3b8' }}>
+                            Veckoplanering och kapacitet. Huvudvyn visas i innehållsområdet.
+                          </Text>
+                        </View>
+                      </View>
+                    ) : (appMode === 'project' || railActiveId === 'sharepoint' || railActiveId === 'projekt' || railActiveId === 'kalkylskede' || railActiveId === 'produktion' || railActiveId === 'avslut' || railActiveId === 'eftermarknad') ? (
+                      <View style={{ flex: 1, minHeight: 0 }}>
+                      <SharePointLeftPanel
+                        leftWidth={leftWidth}
+                        setLeftWidth={setLeftWidth}
+                        leftPanelCollapsed={leftPanelCollapsed}
+                        onToggleLeftPanelCollapse={setLeftPanelCollapsed}
                     webPaneHeight={webPaneHeight}
-                    panResponder={panResponder}
+                    panResponder={leftPanelCollapsed ? null : panResponder}
+                    resizeHandlers={leftPanelCollapsed ? null : leftResizeHandlers}
                     spinSidebarHome={spinSidebarHome}
                     spinSidebarRefresh={spinSidebarRefresh}
                     onPressHome={() => {
                       setSpinSidebarHome((n) => n + 1);
-                      if (selectedProject) closeSelectedProject();
+                      if (selectedProject) {
+                        setPendingLeaveAction({ type: 'rail', railId: 'dashboard' });
+                        closeSelectedProject();
+                        return;
+                      }
+                      setRailActiveId('dashboard');
+                      setAppMode('dashboard');
                     }}
                     onPressRefresh={() => {
                       setSpinSidebarRefresh((n) => n + 1);
-                      // Tvinga om-laddning av SharePoint-hierarkin
                       try { setHierarchyReloadKey((k) => k + 1); } catch (_e) {}
 
                       if (selectedProject) {
@@ -1571,15 +2411,19 @@ export default function HomeScreen({ navigation, route }) {
                       }
                     }}
                     leftTreeScrollRef={leftTreeScrollRef}
-                    selectedProject={selectedProjectSafe}
+                    selectedProject={appMode === 'project' ? selectedProjectSafe : null}
                     projectPhaseKey={projectPhaseKeySafe}
                     phaseNavigation={phaseNavigation}
                     phaseNavigationLoading={phaseNavigationLoading}
                     selectedProjectFolders={selectedProjectFoldersSafe}
                     selectedProjectFoldersLoading={selectedProjectFoldersLoadingSafe}
                     navigation={navigation}
+                    route={route}
+                    showProjectSearch={Platform.OS === 'web'}
+                    phaseShortcutKey={['kalkylskede', 'produktion', 'avslut', 'eftermarknad'].includes(railActiveId) ? railActiveId : null}
                     companyId={companyId}
                     reloadKey={hierarchyReloadKey}
+                    projectsListRefreshKey={projectsListRefreshKey}
                     handleSelectFunction={handleSelectFunction}
                     projectStatusFilter={projectStatusFilterSafe}
                     loadingHierarchy={loadingHierarchy}
@@ -1598,6 +2442,9 @@ export default function HomeScreen({ navigation, route }) {
                     buildStamp={typeof BUILD_STAMP !== 'undefined' ? BUILD_STAMP : null}
                     scrollToEndSafe={scrollToEndSafe}
                     createPortal={createPortal}
+                    onOpenCreateProjectModal={openCreateProjectModal}
+                    onOpenEditProjectModal={openEditProjectModal}
+                    editProjectPayloadRef={editProjectPayloadRef}
                     onSelectProject={(projectData) => {
                       try {
                         if (!projectData || !projectData.id) {
@@ -1612,6 +2459,13 @@ export default function HomeScreen({ navigation, route }) {
                           ...projectData,
                         };
 
+                        // Keep showing global SharePoint/phase lists in the left panel.
+                        // The project is still opened in the main pane.
+                        if (railActiveId === 'sharepoint' || PHASE_SHORTCUT_IDS.includes(String(railActiveId || ''))) {
+                          setAppMode('sharepoint');
+                        } else {
+                          setAppMode('project');
+                        }
                         openProject(project, { selectedAction: null });
                       } catch (error) {
                         console.error('[HomeScreen] Error in onSelectProject callback:', error);
@@ -1672,8 +2526,126 @@ export default function HomeScreen({ navigation, route }) {
                     onAfSelectedItemIdChange={setAfSelectedItemId}
                     afMirrorRefreshNonce={afMirrorRefreshNonce}
                   />
+                      </View>
+                    ) : (
+                      <View style={{ flex: 1, minHeight: 0 }}>
+                        <LeftPanelRailHeader title="Inställningar" />
+                        <View style={{ padding: 16 }}>
+                          <Text style={{ fontSize: 13, color: '#64748b' }}>Inställningar visas här.</Text>
+                        </View>
+                      </View>
+                    )}
+                  </GlobalSidePanel>
 
-                  <HomeMainPaneContainer
+                  {companyContextMenu.visible && companyContextMenu.company && (
+                    <ContextMenu
+                      visible
+                      x={companyContextMenu.x}
+                      y={companyContextMenu.y}
+                      items={[
+                        { key: 'open_popup', label: 'Visa i popup', icon: '📋' },
+                        { key: 'open_full', label: 'Öppna full vy', icon: '↗️' },
+                        { key: 'copy_id', label: 'Kopiera företags-ID', icon: '📄' },
+                        ...(String(companyContextMenu.company?.id || '').trim() !== 'MS Byggsystem'
+                          ? [{ key: 'purge_company', label: 'Radera företag', icon: '🗑️', danger: true }]
+                          : []),
+                      ]}
+                      onClose={() => setCompanyContextMenu({ visible: false, x: 0, y: 0, company: null })}
+                      onSelect={(item) => {
+                        const c = companyContextMenu.company;
+                        setCompanyContextMenu({ visible: false, x: 0, y: 0, company: null });
+                        if (!c) return;
+                        if (item?.key === 'open_popup') openCompanyModal?.(c?.id);
+                        if (item?.key === 'open_full') openCompanyModal?.(c?.id);
+                        if (item?.key === 'copy_id' && c?.id && Platform.OS === 'web' && typeof navigator?.clipboard?.writeText === 'function') {
+                          navigator.clipboard.writeText(c.id).catch(() => {});
+                        }
+                        if (item?.key === 'purge_company' && c?.id && String(c.id).trim() !== 'MS Byggsystem') {
+                          const companyName = String(c.name || c.id || '').trim() || c.id;
+                          const confirmMessage = `Vill du radera företaget "${companyName}" permanent? SharePoint-siter och all data (användare, projekt, mallar) tas bort. Detta kan inte ångras.`;
+                          const doPurge = () => {
+                            setPurgeCompanyLoading({ companyName });
+                            purgeCompanyRemote({ companyId: c.id })
+                              .then((res) => {
+                                const n = (res && res.sharePointSitesDeleted) ?? 0;
+                                const spMsg = n > 0 ? ` ${n} SharePoint-siter raderade i M365.` : ' Kontrollera att Graph-token är satt i functions om siter ska raderas i SharePoint.';
+                                showAlert('Företag raderat', `"${companyName}" har raderats.${spMsg}`);
+                                return fetchCompanies().then((list) => {
+                                  if (Array.isArray(list)) setSuperadminCompanies(list);
+                                });
+                              })
+                              .catch((e) => {
+                                showAlert('Kunde inte radera', e?.message || 'Ett fel uppstod.');
+                              })
+                              .finally(() => {
+                                setPurgeCompanyLoading(null);
+                              });
+                          };
+                          if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm) {
+                            if (window.confirm(confirmMessage)) doPurge();
+                          } else {
+                            Alert.alert('Radera företag', confirmMessage, [
+                              { text: 'Avbryt', style: 'cancel' },
+                              { text: 'Radera permanent', style: 'destructive', onPress: doPurge },
+                            ]);
+                          }
+                        }
+                      }}
+                    />
+                  )}
+
+                  {purgeCompanyLoading && (
+                    <Modal visible transparent animationType="fade" statusBarTranslucent>
+                      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+                        <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 28, maxWidth: 360, width: '100%', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 8 }}>
+                          <ActivityIndicator size="large" color="#b91c1c" style={{ marginBottom: 16 }} />
+                          <Text style={{ fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 8, textAlign: 'center' }}>Raderar företag</Text>
+                          <Text style={{ fontSize: 15, color: '#475569', textAlign: 'center', marginBottom: 4 }}>{purgeCompanyLoading.companyName}</Text>
+                          <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center' }}>Tar bort SharePoint-siter och all data i Firebase. Vänta – avbryt inte.</Text>
+                        </View>
+                      </View>
+                    </Modal>
+                  )}
+
+                  <View
+                    style={[
+                      { flex: 1, flexDirection: 'column', minHeight: 0, minWidth: 0 },
+                      Platform.OS === 'web'
+                        ? { ...getMainPanelBackgroundStyle(), borderLeftWidth: 1, borderLeftColor: 'rgba(0, 0, 0, 0.2)' }
+                        : { backgroundColor: LAYOUT_2026.mainPanelBgNative, borderLeftWidth: 1, borderLeftColor: 'rgba(0, 0, 0, 0.2)' },
+                    ]}
+                  >
+                    <MinimalTopbar
+                      pageTitle={railActiveId === 'planering' ? 'Planering' : (selectedProjectSafe?.name || 'Startsida')}
+                      pageTitleIcon={railActiveId === 'planering' ? <Ionicons name="calendar-outline" size={22} color="#475569" /> : null}
+                      project={selectedProjectSafe || null}
+                      sectionLabel={railActiveId === 'planering' ? 'Planering' : phaseHeaderLabels.sectionLabel}
+                      itemLabel={railActiveId === 'planering' ? planeringActiveTabName : phaseHeaderLabels.itemLabel}
+                      showCreateProject={false}
+                      showRightPanelToggle
+                      rightPanelOpen={!dashboardRightPanelCollapsed}
+                      onRightPanelToggle={() => setDashboardRightPanelCollapsed((c) => !c)}
+                      showActivitiesToggle
+                      activitiesActive={!dashboardRightPanelCollapsed && dashboardRightPanelTab === 'activities'}
+                      onActivitiesToggle={() => {
+                        if (dashboardRightPanelCollapsed) {
+                          setDashboardRightPanelCollapsed(false);
+                          setDashboardRightPanelTab('activities');
+                        } else if (dashboardRightPanelTab === 'activities') {
+                          setDashboardRightPanelCollapsed(true);
+                        } else {
+                          setDashboardRightPanelTab('activities');
+                        }
+                      }}
+                      notificationsBadgeCount={notificationsUnreadCount}
+                    />
+                    {railActiveId === 'planering' ? (
+                      <PlaneringView
+                        companyId={companyId}
+                        onActiveTabName={setPlaneringActiveTabName}
+                      />
+                    ) : (
+                    <HomeMainPaneContainer
                     webPaneHeight={webPaneHeight}
                     rightPaneScrollRef={rightPaneScrollRef}
                     activityScrollRef={activityScrollRef}
@@ -1740,10 +2712,12 @@ export default function HomeScreen({ navigation, route }) {
                     companyProfile={companyProfile}
                     companyId={companyId}
                     routeCompanyId={routeCompanyId}
+                    enabledPhaseKeys={enabledPhaseKeys}
                     setNewProjectModal={setNewProjectModal}
                     scrollToEndSafe={scrollToEndSafe}
                     rightWidth={rightWidth}
                     panResponderRight={panResponderRight}
+                    rightResizeHandlers={rightResizeHandlers}
                     projectPhaseKeySafe={projectPhaseKeySafe}
                     phaseActiveSection={phaseActiveSection}
                     phaseActiveItem={phaseActiveItem}
@@ -1751,7 +2725,10 @@ export default function HomeScreen({ navigation, route }) {
                     setPhaseActiveSection={setPhaseActiveSection}
                     setPhaseActiveItem={setPhaseActiveItem}
                     setPhaseActiveNode={setPhaseActiveNode}
+                    onPhaseHeaderLabels={onPhaseHeaderLabels}
                     onOpenCreateProjectModal={openCreateProjectModal}
+                    onOpenEditProjectModal={openEditProjectModal}
+                    editProjectPayloadRef={editProjectPayloadRef}
 
                     // AF-only explorer state shared with left panel
                     afRelativePath={afRelativePath}
@@ -1762,7 +2739,112 @@ export default function HomeScreen({ navigation, route }) {
 
                     projectModuleRoute={projectModuleRoute}
                   />
+                    )}
+                  </View>
+                  {/* Kalenderpanelen visas alltid när den är öppen (dashboard och projekt) */}
+                  {(
+                    <Animated.View
+                      style={{
+                        width: dashboardRightPanelWidthAnim,
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        alignSelf: 'stretch',
+                        flexDirection: 'row',
+                      }}
+                    >
+                      <View
+                        style={{
+                          width: 6,
+                          minWidth: 6,
+                          alignSelf: 'stretch',
+                          backgroundColor: 'transparent',
+                          ...(Platform.OS === 'web' ? { cursor: 'col-resize' } : {}),
+                        }}
+                        {...(rightResizeHandlers || {})}
+                      />
+                      <View
+                        style={[
+                          { flex: 1, minWidth: 0, overflow: 'hidden' },
+                          Platform.OS === 'web'
+                            ? { ...getRightPanelBackgroundStyle(), ...PANEL_DIVIDER_LEFT }
+                            : { backgroundColor: LAYOUT_2026.sidePanelBgNative, ...PANEL_DIVIDER_LEFT },
+                        ]}
+                      >
+                      <DashboardRightPanel
+                        tab={dashboardRightPanelTab}
+                        upcomingItems={dashboardUpcomingSkyddsrondItems}
+                        upcomingTimelineItems={dashboardUpcomingTimelineItems}
+                        onProjectSelect={(project) => {
+                          if (project?.id) {
+                            setAppMode('project');
+                            openProject(project, { selectedAction: null });
+                          }
+                        }}
+                        userNotifications={userNotifications}
+                        companyActivity={companyActivity}
+                        formatRelativeTime={formatRelativeTime}
+                        findProjectById={findProjectById}
+                        requestProjectSwitch={requestProjectSwitch}
+                        setPhaseActiveSection={setPhaseActiveSection}
+                        setPhaseActiveItem={setPhaseActiveItem}
+                        setProjectModuleRoute={setProjectModuleRoute}
+                        setSidePanelCollapsed={setSidePanelCollapsed}
+                        notificationsError={notificationsError}
+                        onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+                        markAllAsReadLoading={markAllAsReadLoading}
+                      />
+                      </View>
+                    </Animated.View>
+                  )}
                 </View>
+                {/* Användarmeny från rail (portal) */}
+                {createPortal && typeof document !== 'undefined' && (() => {
+                  const menuItems = [
+                    { key: 'my_profile', label: 'Min profil', icon: <Ionicons name="person-outline" size={16} color="#1976D2" /> },
+                    { key: 'menu_separator', label: '', isSeparator: true },
+                    { key: 'logout', label: 'Logga ut', icon: <Ionicons name="log-out-outline" size={16} color="#D32F2F" /> },
+                  ];
+                  let portalRoot = document.getElementById(portalRootId);
+                  if (!portalRoot) {
+                    portalRoot = document.createElement('div');
+                    portalRoot.id = portalRootId;
+                    portalRoot.style.position = 'relative';
+                    document.body.appendChild(portalRoot);
+                  }
+                  return createPortal(
+                    <ContextMenu
+                      visible={userMenuVisible}
+                      x={userMenuPos.x}
+                      y={userMenuPos.y}
+                      items={menuItems}
+                      onClose={() => setUserMenuVisible(false)}
+                      onSelect={async (it) => {
+                        try {
+                          setUserMenuVisible(false);
+                          if (!it) return;
+                          if (it.key === 'my_profile') {
+                            try {
+                              setMyProfileCompanyId(String(companyId || routeCompanyId || '').trim());
+                              setMyProfileModalVisible(true);
+                            } catch (_e) {}
+                            return;
+                          }
+                          if (it.key === 'logout') {
+                            requestLogout();
+                            return;
+                          }
+                        } catch (_e) {}
+                      }}
+                    />,
+                    portalRoot
+                  );
+                })()}
+              <MyProfileModal
+                visible={myProfileModalVisible}
+                companyId={myProfileCompanyId}
+                onClose={() => setMyProfileModalVisible(false)}
+                onSaved={() => {}}
+              />
               </View>
             ) : (
               <View style={{ flex: 1, backgroundColor: 'transparent', minHeight: 0 }}>
@@ -1793,6 +2875,10 @@ export default function HomeScreen({ navigation, route }) {
                   saveDraftToFirestore={saveDraftToFirestore}
                   searchSpinAnim={searchSpinAnim}
                   sharePointStatus={sharePointStatus}
+                  userNotifications={userNotifications}
+                  notificationsUnreadCount={notificationsUnreadCount}
+                  notificationsError={notificationsError}
+                  formatRelativeTime={formatRelativeTime}
                 />
 
                 {/* Allt under headern är skrollbart */}
@@ -1800,13 +2886,19 @@ export default function HomeScreen({ navigation, route }) {
                   style={{ flex: 1, backgroundColor: 'transparent' }}
                   scrollEnabled={scrollEnabled}
                   contentContainerStyle={{ flexGrow: 1, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
+                  onScroll={(e) => setProjectScrollY(e?.nativeEvent?.contentOffset?.y ?? 0)}
+                  scrollEventThrottle={16}
                 >
+                <ProjectScrollContext.Provider value={{ scrollY: projectScrollY }}>
         {Platform.OS === 'web' ? (
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <SharePointLeftPanel
-              leftWidth={leftWidth}
+              leftWidth={effectiveLeftWidth}
+              setLeftWidth={setLeftWidth}
+              leftPanelCollapsed={leftPanelCollapsed}
+              onToggleLeftPanelCollapse={() => setLeftPanelCollapsed((c) => !c)}
               webPaneHeight={webPaneHeight}
-              panResponder={panResponder}
+              panResponder={leftPanelCollapsed ? null : panResponder}
               spinSidebarHome={spinSidebarHome}
               spinSidebarRefresh={spinSidebarRefresh}
               onPressHome={() => {
@@ -1832,8 +2924,12 @@ export default function HomeScreen({ navigation, route }) {
               selectedProjectFolders={selectedProjectFoldersSafe}
               selectedProjectFoldersLoading={selectedProjectFoldersLoadingSafe}
               navigation={navigation}
+              route={route}
+              showProjectSearch={Platform.OS === 'web'}
+              phaseShortcutKey={['kalkylskede', 'produktion', 'avslut', 'eftermarknad'].includes(railActiveId) ? railActiveId : null}
               companyId={companyId}
               reloadKey={hierarchyReloadKey}
+              projectsListRefreshKey={projectsListRefreshKey}
               handleSelectFunction={handleSelectFunction}
               projectStatusFilter={projectStatusFilterSafe}
               loadingHierarchy={loadingHierarchy}
@@ -1852,6 +2948,9 @@ export default function HomeScreen({ navigation, route }) {
               buildStamp={typeof BUILD_STAMP !== 'undefined' ? BUILD_STAMP : null}
               scrollToEndSafe={scrollToEndSafe}
               createPortal={createPortal}
+              onOpenCreateProjectModal={openCreateProjectModal}
+              onOpenEditProjectModal={openEditProjectModal}
+                    editProjectPayloadRef={editProjectPayloadRef}
               onSelectProject={(projectData) => {
                 try {
                   if (!projectData || !projectData.id) {
@@ -1963,6 +3062,7 @@ export default function HomeScreen({ navigation, route }) {
               companyProfile={companyProfile}
               companyId={companyId}
               routeCompanyId={routeCompanyId}
+              enabledPhaseKeys={enabledPhaseKeys}
               setNewProjectModal={setNewProjectModal}
               scrollToEndSafe={scrollToEndSafe}
               rightWidth={rightWidth}
@@ -1975,6 +3075,8 @@ export default function HomeScreen({ navigation, route }) {
               setPhaseActiveItem={setPhaseActiveItem}
               setPhaseActiveNode={setPhaseActiveNode}
               onOpenCreateProjectModal={openCreateProjectModal}
+              onOpenEditProjectModal={openEditProjectModal}
+                    editProjectPayloadRef={editProjectPayloadRef}
 
               // AF-only explorer state shared with left panel
               afRelativePath={afRelativePath}
@@ -2061,6 +3163,7 @@ export default function HomeScreen({ navigation, route }) {
             searchRotate={searchRotate}
             openSearchModal={openSearchModal}
           />
+                </ProjectScrollContext.Provider>
                 </ScrollView>
               </View>
 

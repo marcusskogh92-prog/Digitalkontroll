@@ -75,6 +75,9 @@ export default function SharePointFolderHierarchyTree({
   // (no margin-based indentation that makes hover/active look inset/pill-like).
   edgeToEdge = false,
 
+  // When left panel is collapsed, show only icons (tooltips on web).
+  iconOnly = false,
+
   // Optional (FFU): ensure/pin a system folder in the root.
   systemFolderName = null,
   ensureSystemFolder = false,
@@ -354,6 +357,7 @@ export default function SharePointFolderHierarchyTree({
       rows.push(
         <SidebarItem
           key={id}
+          iconOnly={iconOnly}
           fullWidth={Boolean(edgeToEdge)}
           squareCorners={Boolean(edgeToEdge)}
           indentMode={edgeToEdge ? 'padding' : 'margin'}

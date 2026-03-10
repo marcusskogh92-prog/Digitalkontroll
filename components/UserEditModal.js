@@ -1,37 +1,205 @@
+/**
+ * Modal för att skapa eller redigera användare.
+ * Följer samma golden rules och layout som Min profil: ModalBase, mörk header, avatar vänster, formulär höger.
+ */
+
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
+import {
+  Animated,
+  Image,
+  Platform,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { MODAL_DESIGN_2026 as D } from '../constants/modalDesign2026';
+import { LEFT_NAV } from '../constants/leftNavTheme';
+import { useDraggableResizableModal } from '../hooks/useDraggableResizableModal';
+import ModalBase from './common/ModalBase';
 
-const AVATAR_PRESETS = [
-  { key: 'blue_female', label: 'Kvinna (blå)', icon: 'woman', bg: '#1976D2' },
-  { key: 'cyan_male', label: 'Man (cyan)', icon: 'man', bg: '#00ACC1' },
-  { key: 'teal_person', label: 'Person (turkos)', icon: 'person', bg: '#26A69A' },
-  { key: 'orange_person', label: 'Person (orange)', icon: 'person', bg: '#FB8C00' },
-  { key: 'red_person', label: 'Person (röd)', icon: 'person', bg: '#E53935' },
-  { key: 'green_person', label: 'Person (grön)', icon: 'person', bg: '#43A047' },
+const FONT_FAMILY = (LEFT_NAV && LEFT_NAV.webFontFamily) || 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
+/** Som Min profil: initialer från namn/email, annars "?". */
+function getInitials(firstName, lastName, email) {
+  const fn = String(firstName || '').trim();
+  const ln = String(lastName || '').trim();
+  if (fn && ln) return `${fn.charAt(0)}${ln.charAt(0)}`.toUpperCase();
+  if (fn) return fn.slice(0, 2).toUpperCase();
+  const e = String(email || '').trim();
+  if (e) return e.slice(0, 2).toUpperCase();
+  return '?';
+}
+
+const ADMIN_PERMISSIONS = [
+  { key: 'manage_templates', label: 'Hantera mallar' },
+  { key: 'manage_categories', label: 'Hantera kategorier' },
+  { key: 'manage_chart_of_accounts', label: 'Hantera kontoplan' },
+  { key: 'manage_building_parts', label: 'Hantera byggdelar' },
+  { key: 'manage_sharepoint', label: 'Hantera SharePoint' },
+  { key: 'manage_users', label: 'Hantera användare' },
+  { key: 'manage_ai_settings', label: 'Hantera AI-inställningar' },
 ];
 
-const pickRandomAvatarPresetKey = () => {
-  try {
-    const keys = (AVATAR_PRESETS || []).map(p => p && p.key).filter(Boolean);
-    if (!keys.length) return 'blue_female';
-    return keys[Math.floor(Math.random() * keys.length)];
-  } catch (_e) {
-    return 'blue_female';
-  }
-};
+/** Register = Struktur under Register (Mallar, Kategorier, Kontoplan, Byggdelar). */
+const REGISTER_PERMISSION_KEYS = ['manage_templates', 'manage_categories', 'manage_chart_of_accounts', 'manage_building_parts'];
+/** Administration = Användare, SharePoint, AI m.m. */
+const ADMINISTRATION_PERMISSION_KEYS = ['manage_sharepoint', 'manage_users', 'manage_ai_settings'];
 
-export default function UserEditModal({ visible, member, companyId, onClose, onSave, saving, isNew, errorMessage, onDelete, canDelete = true }) {
+const PERMISSION_GROUPS = [
+  { title: 'Register', keys: REGISTER_PERMISSION_KEYS },
+  { title: 'Administration', keys: ADMINISTRATION_PERMISSION_KEYS },
+];
+
+/** Alla behörighetsnycklar – används för att bocka i allt när man väljer Admin/Superadmin. */
+const ALL_PERMISSION_KEYS = [...REGISTER_PERMISSION_KEYS, ...ADMINISTRATION_PERMISSION_KEYS];
+
+const USER_EDIT_MODAL_WIDTH = 680;
+const USER_EDIT_MODAL_HEIGHT = 560;
+
+const SAVING_STEPS_NEW = ['Skapar användare…', 'Sparar behörigheter…', 'Skickar inbjudan…'];
+const SAVING_STEPS_EDIT = ['Sparar ändringar…', 'Uppdaterar behörigheter…', 'Klart snart…'];
+
+function UserEditSavingOverlay({ isNew }) {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+  const [stepIndex, setStepIndex] = useState(0);
+  const steps = isNew ? SAVING_STEPS_NEW : SAVING_STEPS_EDIT;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.08, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.95, duration: 600, useNativeDriver: true }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [pulseAnim]);
+
+  useEffect(() => {
+    const rotate = Animated.loop(
+      Animated.timing(rotateAnim, { toValue: 1, duration: 2500, useNativeDriver: true })
+    );
+    rotate.start();
+    return () => rotate.stop();
+  }, [rotateAnim]);
+
+  useEffect(() => {
+    const id = setInterval(() => setStepIndex((i) => (i + 1) % steps.length), 1800);
+    return () => clearInterval(id);
+  }, [steps.length]);
+
+  const spin = rotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+
+  return (
+    <View style={{ alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+      <Animated.View style={{ transform: [{ scale: pulseAnim }, { rotate: spin }] }}>
+        <View style={{ position: 'relative', width: 52, height: 52, alignItems: 'center', justifyContent: 'center' }}>
+          <Ionicons name="person" size={44} color="#2D3A4B" />
+          <View style={{
+            position: 'absolute', right: -2, bottom: -2, width: 24, height: 24, borderRadius: 12,
+            backgroundColor: '#2D3A4B', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Ionicons name="key" size={12} color="#fff" />
+          </View>
+        </View>
+      </Animated.View>
+      <Text style={{ fontSize: 16, fontWeight: '600', color: '#1e293b', marginTop: 16, marginBottom: 4, fontFamily: FONT_FAMILY }}>
+        {isNew ? 'Skapar användare' : 'Sparar användare'}
+      </Text>
+      <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 14, fontFamily: FONT_FAMILY }}>{steps[stepIndex]}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        {[0, 1, 2].map((i) => (
+          <View
+            key={i}
+            style={{
+              width: 8, height: 8, borderRadius: 4, backgroundColor: i === stepIndex ? '#2D3A4B' : '#cbd5e1',
+              ...(i === stepIndex ? { transform: [{ scale: 1.2 }] } : {}),
+            }}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+export default function UserEditModal({
+  visible,
+  member,
+  companyId,
+  onClose,
+  onSave,
+  saving,
+  saveSuccess,
+  isNew,
+  errorMessage,
+  onDelete,
+  canDelete = true,
+  userLimit = null,
+  usagePercent = 0,
+}) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('user'); // 'admin' | 'user'
+  const [role, setRole] = useState('user');
   const [showPassword, setShowPassword] = useState(false);
-  const [avatarPreset, setAvatarPreset] = useState('blue_female');
+  const [sendInviteEmail, setSendInviteEmail] = useState(true);
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState('');
   const [disabled, setDisabled] = useState(false);
+  const [permissions, setPermissions] = useState([]);
   const avatarUploadInputRef = useRef(null);
+
+  const { boxStyle: dragBoxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(visible, {
+    defaultWidth: USER_EDIT_MODAL_WIDTH,
+    defaultHeight: USER_EDIT_MODAL_HEIGHT,
+    minWidth: 480,
+    minHeight: 420,
+  });
+  const hasDragPosition = Platform.OS === 'web' && dragBoxStyle && Object.keys(dragBoxStyle).length > 0;
+  const defaultBoxStyle = hasDragPosition
+    ? {}
+    : {
+        width: Platform.OS === 'web' ? USER_EDIT_MODAL_WIDTH : '92%',
+        maxWidth: USER_EDIT_MODAL_WIDTH,
+        height: Platform.OS === 'web' ? USER_EDIT_MODAL_HEIGHT : '75%',
+        maxHeight: Platform.OS === 'web' ? USER_EDIT_MODAL_HEIGHT : '75%',
+      };
+
+  const inputStyle = {
+    width: '100%',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: D.inputRadius,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    fontSize: 13,
+    color: '#1e293b',
+    fontFamily: FONT_FAMILY,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  };
+  const labelStyle = { fontSize: 13, fontWeight: '500', color: '#334155', marginBottom: 4, fontFamily: FONT_FAMILY };
+
+  const togglePermission = (key) => {
+    setPermissions((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  };
+
+  const getPermissionLabel = (key) => ADMIN_PERMISSIONS.find((p) => p.key === key)?.label ?? key;
+
+  const toggleGroup = (groupKeys) => {
+    const allChecked = groupKeys.every((k) => permissions.includes(k));
+    setPermissions((prev) => {
+      if (allChecked) return prev.filter((k) => !groupKeys.includes(k));
+      const added = groupKeys.filter((k) => !prev.includes(k));
+      return [...prev, ...added];
+    });
+  };
+
+  const isGroupAllChecked = (groupKeys) => groupKeys.length > 0 && groupKeys.every((k) => permissions.includes(k));
 
   const normalizeName = (value) => {
     if (!value) return '';
@@ -44,23 +212,24 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
   };
 
   const isMsBygg = String(companyId || '').trim() === 'MS Byggsystem';
-
   const rawEmail = String(email || '').trim();
   const emailIsValid = rawEmail.length > 0 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail);
+  const passwordOptional = isNew && sendInviteEmail;
   const requiredFilledForCreate = () => {
     if (!isNew) return true;
-    return String(firstName || '').trim().length > 0
+    const base = String(firstName || '').trim().length > 0
       && String(lastName || '').trim().length > 0
       && emailIsValid
-      && String(password || '').length > 0
       && String(role || '').length > 0;
+    if (passwordOptional) return base;
+    return base && String(password || '').length > 0;
   };
 
   const firstNameMissing = isNew && String(firstName || '').trim().length === 0;
   const lastNameMissing = isNew && String(lastName || '').trim().length === 0;
   const emailMissing = isNew && !emailIsValid;
-  const passwordMissing = isNew && String(password || '').length === 0;
-  const roleMissing = isNew && String(role || '').length === 0;
+  const passwordMissing = isNew && !passwordOptional && String(password || '').length === 0;
+  const licenseWarning = isNew && typeof usagePercent === 'number' && usagePercent >= 90;
 
   const generateTempPassword = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=';
@@ -85,17 +254,13 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
     else setRole(adminGuess ? 'admin' : 'user');
     setPassword('');
     setDisabled(!!(member?.disabled === true || String(member?.status || '').toLowerCase() === 'disabled'));
-    try {
-      const preset = String(member?.avatarPreset || '').trim();
-      const match = AVATAR_PRESETS.some(p => p.key === preset);
-      if (match) setAvatarPreset(preset);
-      else if (isNew) setAvatarPreset(pickRandomAvatarPresetKey());
-      else setAvatarPreset('blue_female');
-    } catch (_e) {
-      setAvatarPreset(isNew ? pickRandomAvatarPresetKey() : 'blue_female');
-    }
     setAvatarFile(null);
     setAvatarPreviewUrl('');
+    setSendInviteEmail(true);
+    const perms = member?.permissions;
+    const isAdminRole = isSuperMember || adminGuess;
+    const defaultAdminPerms = Array.isArray(perms) && perms.length > 0 ? [...perms] : (isAdminRole ? [...ALL_PERMISSION_KEYS] : []);
+    setPermissions(defaultAdminPerms);
   }, [visible, member, isNew, isMsBygg]);
 
   useEffect(() => {
@@ -116,260 +281,471 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
     }
   }, [visible, avatarFile]);
 
-  if (!visible) return null;
-
   const emailReadOnly = !isNew && String(member?.email || '').trim().length > 0;
 
-  return (
-    <div onClick={onClose} style={{ position: 'fixed', left: 0, top: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200 }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: 420, maxWidth: 'calc(100% - 40px)', background: '#fff', borderRadius: 8, padding: 18, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 10px 0' }}>
-          <div style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: '#1976D2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="person" size={14} color="#fff" />
-          </div>
-          <h4 style={{ margin: 0 }}>{isNew ? 'Lägg till ny användare' : 'Redigera användare'}</h4>
-        </div>
-        <div style={{ marginBottom: 8 }}>
-          <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Förnamn{isNew && <span style={{ color: '#e53935', marginLeft: 6 }}>*</span>}</label>
-          <input
-            value={firstName}
-            onChange={e => setFirstName(normalizeName(e.target.value))}
-            aria-required={isNew}
-            style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${firstNameMissing ? '#e53935' : '#ddd'}`, boxSizing: 'border-box' }}
-          />
-        </div>
-        <div style={{ marginBottom: 8 }}>
-          <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Efternamn{isNew && <span style={{ color: '#e53935', marginLeft: 6 }}>*</span>}</label>
-          <input
-            value={lastName}
-            onChange={e => setLastName(normalizeName(e.target.value))}
-            aria-required={isNew}
-            style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${lastNameMissing ? '#e53935' : '#ddd'}`, boxSizing: 'border-box' }}
-          />
-        </div>
-        <div style={{ marginBottom: 8 }}>
-          <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>E-post{isNew && <span style={{ color: '#e53935', marginLeft: 6 }}>*</span>}</label>
-          <input
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            aria-required={isNew}
-            readOnly={emailReadOnly}
-            style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${emailMissing ? '#e53935' : '#ddd'}`, boxSizing: 'border-box', background: emailReadOnly ? '#F8FAFC' : '#fff' }}
-          />
-          {emailMissing && rawEmail.length > 0 ? (
-            <div style={{ color: '#e53935', fontSize: 12, marginTop: 4 }}>
-              Ogiltig e-postadress. Använd formatet namn@foretag.se
-            </div>
-          ) : null}
-          {!isNew && emailReadOnly ? (
-            <div style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>
-              E-post kan inte ändras för befintlig användare.
-            </div>
-          ) : null}
-        </div>
+  const openAvatarUpload = () => {
+    if (Platform.OS === 'web' && avatarUploadInputRef.current) {
+      avatarUploadInputRef.current.value = '';
+      avatarUploadInputRef.current.click();
+    }
+  };
 
-        {isNew ? (
-          <div style={{ marginBottom: 8 }}>
-            <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Lösenord{isNew && <span style={{ color: '#e53935', marginLeft: 6 }}>*</span>}</label>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder={isNew ? 'Välj lösenord' : 'Fyll i för att byta lösenord'}
-                aria-required={isNew}
-                style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${passwordMissing ? '#e53935' : '#ddd'}`, boxSizing: 'border-box' }}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(prev => !prev)}
-                style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff', cursor: 'pointer' }}
-              >
-                {showPassword ? 'Dölj' : 'Visa'}
-              </button>
-              <button
-                type="button"
-                onClick={generateTempPassword}
-                style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #1976D2', background: '#E3F2FD', cursor: 'pointer', color: '#1976D2', fontSize: 12, whiteSpace: 'nowrap' }}
-              >
-                Generera
-              </button>
-            </div>
-          </div>
-        ) : null}
+  const onAvatarFileSelected = (e) => {
+    const f = e?.target?.files?.[0] ?? null;
+    setAvatarFile(f);
+    try { if (e?.target) e.target.value = ''; } catch (_e2) {}
+  };
 
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>Behörighet{isNew && <span style={{ color: '#e53935', marginLeft: 6 }}>*</span>}</label>
-          <select
-            value={role}
-            onChange={e => setRole(e.target.value)}
-            aria-required={isNew}
-            style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${roleMissing ? '#e53935' : '#ddd'}`, boxSizing: 'border-box', fontSize: 16, lineHeight: '20px', fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', color: '#222', background: '#fff' }}
-          >
-            {isMsBygg && <option value="superadmin">Superadmin</option>}
-            <option value="admin">Administratör</option>
-            <option value="user">Användare</option>
-          </select>
-        </div>
+  if (!visible) return null;
 
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>Status</label>
-          <select
-            value={disabled ? 'inactive' : 'active'}
-            onChange={(e) => setDisabled(e.target.value === 'inactive')}
-            style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd', boxSizing: 'border-box', fontSize: 16, lineHeight: '20px', fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', color: '#222', background: '#fff' }}
-          >
-            <option value="active">Aktiv</option>
-            <option value="inactive">Inaktiv</option>
-          </select>
-        </div>
+  const initials = getInitials(firstName, lastName, email);
+  const existingPhotoUrl = !isNew && member?.photoURL ? String(member.photoURL).trim() : '';
+  const showPhoto = avatarPreviewUrl || existingPhotoUrl;
 
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>Profilbild – Välj en ikon eller ladda upp egen bild</label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, alignItems: 'center' }}>
-            {AVATAR_PRESETS.map(p => {
-              const selected = avatarPreset === p.key;
-              return (
-                <button
-                  key={p.key}
-                  type="button"
-                  onClick={() => {
-                    setAvatarPreset(p.key);
-                    setAvatarFile(null);
-                  }}
-                  title={p.label}
-                  aria-label={p.label}
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 999,
-                    border: selected ? '2px solid #1976D2' : '1px solid #E0E0E0',
-                    background: p.bg,
-                    cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: selected ? '0 0 0 3px rgba(25,118,210,0.15)' : 'none',
-                  }}
-                >
-                  <Ionicons name={p.icon} size={20} color="#fff" />
-                </button>
-              );
-            })}
-
-            {/* Upload own image */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-              <button
-                type="button"
-                onClick={() => {
-                  try { avatarUploadInputRef.current?.click?.(); } catch (_e) {}
-                }}
-                title={avatarFile || avatarPreviewUrl ? 'Egen bild vald' : 'Ladda upp egen bild'}
-                aria-label="Ladda upp egen bild"
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 999,
-                  border: (avatarFile || avatarPreviewUrl) ? '2px solid #1976D2' : '1px dashed #CBD5E1',
-                  background: '#F8FAFC',
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  boxShadow: (avatarFile || avatarPreviewUrl) ? '0 0 0 3px rgba(25,118,210,0.15)' : 'none',
-                }}
-              >
-                <Ionicons name="image-outline" size={18} color={avatarFile || avatarPreviewUrl ? '#1976D2' : '#64748b'} />
-              </button>
-              <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, lineHeight: '12px' }}>Ladda upp bild</div>
-            </div>
-          </div>
-
-          <input
-            ref={avatarUploadInputRef}
-            type="file"
-            accept="image/*"
-            onChange={(e) => {
-              try {
-                const f = e?.target?.files && e.target.files[0] ? e.target.files[0] : null;
-                setAvatarFile(f);
-                if (f) setAvatarPreset('');
-              } catch (_e) {
-                setAvatarFile(null);
-              } finally {
-                try { if (e?.target) e.target.value = ''; } catch (_e2) {}
-              }
+  const footer = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flex: 1 }}>
+      <View>
+        {!isNew && typeof onDelete === 'function' ? (
+          <TouchableOpacity
+            disabled={saving || !canDelete}
+            onPress={() => onDelete(member)}
+            style={{
+              paddingVertical: D.buttonPaddingVertical,
+              paddingHorizontal: D.buttonPaddingHorizontal,
+              borderRadius: D.buttonRadius,
+              borderWidth: 1,
+              borderColor: '#fecaca',
+              backgroundColor: '#fef2f2',
             }}
-            style={{ display: 'none' }}
-          />
+          >
+            <Text style={{ fontSize: 13, fontWeight: '600', color: '#b91c1c', fontFamily: FONT_FAMILY }}>Ta bort användare</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <TouchableOpacity
+          onPress={onClose}
+          disabled={saving}
+          style={{
+            paddingVertical: D.buttonPaddingVertical,
+            paddingHorizontal: D.buttonPaddingHorizontal,
+            borderRadius: D.buttonRadius,
+            backgroundColor: '#fef2f2',
+            borderWidth: 1,
+            borderColor: '#fecaca',
+          }}
+        >
+          <Text style={{ fontSize: 13, fontWeight: '500', color: '#b91c1c', fontFamily: FONT_FAMILY }}>Avbryt</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          disabled={saving || (isNew && !requiredFilledForCreate())}
+          onPress={async () => {
+            if (typeof onSave === 'function') {
+              await onSave({
+                firstName,
+                lastName,
+                email,
+                role,
+                password,
+                disabled,
+                avatarFile,
+                permissions: (role === 'admin' || role === 'superadmin') ? permissions : [],
+                sendInviteEmail: isNew ? sendInviteEmail : undefined,
+              });
+            }
+          }}
+          style={{
+            paddingVertical: D.buttonPaddingVertical,
+            paddingHorizontal: D.buttonPaddingHorizontal,
+            borderRadius: D.buttonRadius,
+            backgroundColor: D.buttonPrimaryBg ?? '#2D3A4B',
+            opacity: (saving || (isNew && !requiredFilledForCreate())) ? 0.6 : 1,
+          }}
+        >
+          <Text style={{ fontSize: 12, fontWeight: D.buttonPrimaryFontWeight ?? '500', color: D.buttonPrimaryColor ?? '#fff', fontFamily: FONT_FAMILY }}>
+            {saving ? 'Sparar...' : isNew ? 'Skapa användare' : 'Spara'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 
-          {avatarPreviewUrl ? (
-            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 44, height: 44, borderRadius: 999, overflow: 'hidden', border: '1px solid #ddd' }} title="Vald bild">
-                  <img src={avatarPreviewUrl} alt="Vald bild" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                </div>
-                <div style={{ fontSize: 12, color: '#64748b' }}>Egen bild vald</div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAvatarFile(null)}
-                style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid #E2E8F0', background: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700, color: '#475569' }}
-              >
-                Ta bort bild
-              </button>
-            </div>
-          ) : null}
-        </div>
-
-        {errorMessage ? (
-          <div style={{ color: '#D32F2F', fontSize: 12, marginBottom: 8 }}>
-            {errorMessage}
-          </div>
+  return (
+    <ModalBase
+      visible={visible}
+      onClose={onClose}
+      title={isNew ? 'Lägg till användare' : 'Redigera användare'}
+      subtitle={isNew ? 'Skapa ny admin eller användare' : undefined}
+      headerVariant="neutralCompact"
+      titleIcon={<Ionicons name="person" size={D.headerNeutralCompactIconPx ?? 14} color={D.headerNeutralTextColor} />}
+      footer={footer}
+      boxStyle={[defaultBoxStyle, dragBoxStyle]}
+      overlayStyle={overlayStyle}
+      headerProps={headerProps}
+      resizeHandles={resizeHandles}
+      contentStyle={{ padding: 0, flex: 1, minHeight: 0 }}
+    >
+      <View style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: D.contentPadding, paddingBottom: 16 }} showsVerticalScrollIndicator>
+        {/* Licens (endast ny användare) – golden rule: info-banner enligt MODAL_DESIGN_2026 */}
+        {isNew && userLimit != null ? (
+          <View style={{ marginBottom: D.sectionGap ?? 16 }}>
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingVertical: D.buttonPaddingVertical,
+              paddingHorizontal: 12,
+              borderRadius: D.inputRadius,
+              backgroundColor: D.tableHeaderBackgroundColor ?? '#f1f5f9',
+              borderWidth: 1,
+              borderColor: D.tableHeaderBorderColor ?? '#e2e8f0',
+            }}>
+              <Ionicons name="information-circle-outline" size={16} color={D.tableHeaderColor ?? '#475569'} style={{ marginRight: 8 }} />
+              <Text style={{
+                fontSize: 12,
+                fontWeight: '500',
+                color: D.tableHeaderColor ?? '#475569',
+                fontFamily: FONT_FAMILY,
+              }}>
+                Påverkar licens: +1 användare
+              </Text>
+            </View>
+            {licenseWarning ? (
+              <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#fff7ed', paddingVertical: D.buttonPaddingVertical, paddingHorizontal: 12, borderRadius: D.inputRadius, borderWidth: 1, borderColor: '#fed7aa' }}>
+                <Ionicons name="warning" size={16} color="#c2410c" />
+                <Text style={{ fontSize: 12, fontWeight: '500', color: '#c2410c', fontFamily: FONT_FAMILY }}>Licensgräns nära att uppnås</Text>
+              </View>
+            ) : null}
+          </View>
         ) : null}
 
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
-          {!isNew && typeof onDelete === 'function' ? (
-            <button
-              type="button"
-              disabled={saving || !canDelete}
-              onClick={() => onDelete(member)}
+        {/* Layout som Min profil: vänster avatar, höger formulär */}
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 20, marginBottom: 14 }}>
+          {/* Vänster: avatar som Min profil – uppladdad bild eller initialer/grå ikon, "+ Byt bild" / "Ta bort bild" */}
+          <View style={{ alignItems: 'center' }}>
+            <View
               style={{
-                padding: '8px 10px',
-                borderRadius: 6,
-                border: '1px solid #FECACA',
-                background: '#FFEBEE',
-                color: '#C62828',
-                fontWeight: 800,
-                cursor: (saving || !canDelete) ? 'not-allowed' : 'pointer',
+                width: 64,
+                height: 64,
+                borderRadius: 32,
+                backgroundColor: showPhoto ? '#e2e8f0' : '#94a3b8',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden',
               }}
             >
-              Ta bort användare
-            </button>
-          ) : <div />}
+              {avatarPreviewUrl ? (
+                Platform.OS === 'web' ? (
+                  <img src={avatarPreviewUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                ) : (
+                  <Image source={{ uri: avatarPreviewUrl }} style={{ width: 64, height: 64 }} resizeMode="cover" />
+                )
+              ) : existingPhotoUrl ? (
+                Platform.OS === 'web' ? (
+                  <img src={existingPhotoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                ) : (
+                  <Image source={{ uri: existingPhotoUrl }} style={{ width: 64, height: 64 }} resizeMode="cover" />
+                )
+              ) : (
+                <Text style={{ fontSize: 20, fontWeight: '600', color: '#fff', fontFamily: FONT_FAMILY }}>{initials}</Text>
+              )}
+            </View>
+            <TouchableOpacity onPress={openAvatarUpload} style={{ marginTop: 6 }}>
+              <Text style={{ fontSize: 12, color: '#1976D2', fontWeight: '500', fontFamily: FONT_FAMILY }}>+ Byt bild</Text>
+            </TouchableOpacity>
+            {(avatarFile || avatarPreviewUrl) ? (
+              <TouchableOpacity onPress={() => { setAvatarFile(null); setAvatarPreviewUrl(''); }} style={{ marginTop: 2 }}>
+                <Text style={{ fontSize: 11, color: '#64748b', fontFamily: FONT_FAMILY }}>Ta bort bild</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
 
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button
-              disabled={saving || !requiredFilledForCreate()}
-              onClick={async () => {
-                if (typeof onSave === 'function') {
-                  await onSave({ firstName, lastName, email, role, password, disabled, avatarPreset, avatarFile });
-                }
-              }}
-              style={{
-                backgroundColor: '#1976D2',
-                color: '#fff',
-                padding: '8px 10px',
-                borderRadius: 6,
-                border: 'none',
-                opacity: (saving || !requiredFilledForCreate()) ? 0.5 : 1,
-                cursor: (saving || !requiredFilledForCreate()) ? 'not-allowed' : 'pointer'
-              }}
-            >{saving ? 'Sparar...' : 'Spara'}</button>
-            <button disabled={saving} onClick={() => onClose && onClose()} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>Avbryt</button>
-          </div>
-        </div>
-      </div>
-    </div>
+          {/* Höger: formulär */}
+          <View style={{ flex: 1, minWidth: 220 }}>
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={labelStyle}>Förnamn{isNew ? <Text style={{ color: '#dc2626', marginLeft: 4 }}> *</Text> : null}</Text>
+                <TextInput
+                  value={firstName}
+                  onChangeText={(v) => setFirstName(normalizeName(v))}
+                  placeholder="T.ex. Anna"
+                  style={[inputStyle, firstNameMissing && { borderColor: '#dc2626' }]}
+                  editable={!saving}
+                />
+                {firstNameMissing ? <Text style={{ marginTop: 2, fontSize: 11, color: '#dc2626', fontFamily: FONT_FAMILY }}>Fyll i förnamn</Text> : null}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={labelStyle}>Efternamn{isNew ? <Text style={{ color: '#dc2626', marginLeft: 4 }}> *</Text> : null}</Text>
+                <TextInput
+                  value={lastName}
+                  onChangeText={(v) => setLastName(normalizeName(v))}
+                  placeholder="T.ex. Andersson"
+                  style={[inputStyle, lastNameMissing && { borderColor: '#dc2626' }]}
+                  editable={!saving}
+                />
+                {lastNameMissing ? <Text style={{ marginTop: 2, fontSize: 11, color: '#dc2626', fontFamily: FONT_FAMILY }}>Fyll i efternamn</Text> : null}
+              </View>
+            </View>
+            <View style={{ marginBottom: 12 }}>
+              <Text style={labelStyle}>E-post{isNew ? <Text style={{ color: '#dc2626', marginLeft: 4 }}> *</Text> : null}</Text>
+              <TextInput
+                value={email}
+                onChangeText={setEmail}
+                placeholder="namn@foretag.se"
+                editable={!emailReadOnly}
+                style={[
+                  inputStyle,
+                  emailMissing && { borderColor: '#dc2626' },
+                  emailReadOnly && { backgroundColor: '#F8FAFC', color: '#64748b' },
+                ]}
+              />
+              {emailMissing && rawEmail.length > 0 ? (
+                <Text style={{ marginTop: 2, fontSize: 11, color: '#dc2626', fontFamily: FONT_FAMILY }}>Ogiltig e-postadress. Använd formatet namn@foretag.se</Text>
+              ) : null}
+              {!isNew && emailReadOnly ? (
+                <Text style={{ marginTop: 2, fontSize: 11, color: '#64748b', fontFamily: FONT_FAMILY }}>E-post kan inte ändras för befintlig användare.</Text>
+              ) : null}
+            </View>
+
+            {/* Åtkomst & roll */}
+            <View style={{ marginBottom: 12 }}>
+              <Text style={[labelStyle, { fontSize: 11, fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }]}>Åtkomst & roll</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', backgroundColor: '#F1F5F9', borderRadius: D.buttonRadius, padding: 3, alignSelf: 'flex-start' }}>
+                {isMsBygg ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setRole('superadmin');
+                      if (role !== 'superadmin') setPermissions([...ALL_PERMISSION_KEYS]);
+                    }}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 12,
+                      borderRadius: D.buttonRadius,
+                      backgroundColor: role === 'superadmin' ? '#1e293b' : 'transparent',
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: role === 'superadmin' ? '#fff' : '#475569', fontFamily: FONT_FAMILY }}>Superadmin</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  onPress={() => {
+                    setRole('admin');
+                    if (role !== 'admin') setPermissions([...ALL_PERMISSION_KEYS]);
+                  }}
+                  style={{
+                    paddingVertical: 6,
+                    paddingHorizontal: 12,
+                    borderRadius: D.buttonRadius,
+                    backgroundColor: role === 'admin' ? '#1e293b' : 'transparent',
+                  }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: role === 'admin' ? '#fff' : '#475569', fontFamily: FONT_FAMILY }}>Admin</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setRole('user')}
+                  style={{
+                    paddingVertical: 6,
+                    paddingHorizontal: 12,
+                    borderRadius: D.buttonRadius,
+                    backgroundColor: role === 'user' ? '#1e293b' : 'transparent',
+                  }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: role === 'user' ? '#fff' : '#475569', fontFamily: FONT_FAMILY }}>Användare</Text>
+                </TouchableOpacity>
+              </View>
+              {(role === 'admin' || role === 'superadmin') ? (
+                <View style={{ marginTop: 8, padding: 12, borderRadius: D.inputRadius, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 10, fontFamily: FONT_FAMILY }}>Admin-behörigheter</Text>
+                  <View style={{ flexDirection: 'row', gap: 20 }}>
+                    {PERMISSION_GROUPS.map((group) => (
+                      <View key={group.title} style={{ flex: 1, minWidth: 0 }}>
+                        <TouchableOpacity
+                          onPress={() => toggleGroup(group.keys)}
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}
+                        >
+                          <View style={{
+                            width: 16,
+                            height: 16,
+                            borderRadius: 3,
+                            borderWidth: 1,
+                            borderColor: '#64748b',
+                            backgroundColor: isGroupAllChecked(group.keys) ? '#1e293b' : 'transparent',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}>
+                            {isGroupAllChecked(group.keys) ? <Ionicons name="checkmark" size={10} color="#fff" /> : null}
+                          </View>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: '#1e293b', fontFamily: FONT_FAMILY }}>{group.title}</Text>
+                        </TouchableOpacity>
+                        {group.keys.map((key) => (
+                          <TouchableOpacity
+                            key={key}
+                            onPress={() => togglePermission(key)}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6, marginLeft: 24 }}
+                          >
+                            <View style={{
+                              width: 16,
+                              height: 16,
+                              borderRadius: 3,
+                              borderWidth: 1,
+                              borderColor: '#94a3b8',
+                              backgroundColor: permissions.includes(key) ? '#1e293b' : 'transparent',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}>
+                              {permissions.includes(key) ? <Ionicons name="checkmark" size={10} color="#fff" /> : null}
+                            </View>
+                            <Text style={{ fontSize: 13, color: '#475569', fontFamily: FONT_FAMILY }}>{getPermissionLabel(key)}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+            </View>
+
+            {/* Lösenord (endast ny användare) */}
+            {isNew ? (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={[labelStyle, { fontSize: 11, fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }]}>Lösenord</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <TextInput
+                    secureTextEntry={!showPassword}
+                    value={password}
+                    onChangeText={setPassword}
+                    placeholder={sendInviteEmail ? 'Valfritt – skicka inbjudan istället' : 'Välj lösenord'}
+                    style={[inputStyle, { flex: 1, minWidth: 160 }, passwordMissing && !sendInviteEmail && { borderColor: '#dc2626' }]}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowPassword((p) => !p)}
+                    style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: 12, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#fff' }}
+                  >
+                    <Text style={{ fontSize: 12, color: '#475569', fontFamily: FONT_FAMILY }}>{showPassword ? 'Dölj' : 'Visa'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={generateTempPassword}
+                    style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: 12, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#1e293b', backgroundColor: '#F1F5F9' }}
+                  >
+                    <Text style={{ fontSize: 12, color: '#1e293b', fontWeight: '500', fontFamily: FONT_FAMILY }}>Generera</Text>
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setSendInviteEmail((v) => !v)}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}
+                >
+                  <View style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 3,
+                    borderWidth: 1,
+                    borderColor: '#94a3b8',
+                    backgroundColor: sendInviteEmail ? '#1e293b' : 'transparent',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    {sendInviteEmail ? <Ionicons name="checkmark" size={10} color="#fff" /> : null}
+                  </View>
+                  <Text style={{ fontSize: 13, color: '#334155', fontFamily: FONT_FAMILY }}>Skicka inbjudningsmail till användaren</Text>
+                </TouchableOpacity>
+                {passwordMissing && !sendInviteEmail ? (
+                  <Text style={{ marginTop: 2, fontSize: 11, color: '#dc2626', fontFamily: FONT_FAMILY }}>Ange lösenord eller bocka i inbjudningsmail</Text>
+                ) : null}
+              </View>
+            ) : null}
+
+            {/* Status (endast redigera) */}
+            {!isNew ? (
+              <View style={{ marginBottom: 4 }}>
+                <Text style={[labelStyle, { fontSize: 11, fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }]}>Status</Text>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => setDisabled(false)}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 12,
+                      borderRadius: D.buttonRadius,
+                      borderWidth: 1,
+                      borderColor: !disabled ? '#1e293b' : '#E2E8F0',
+                      backgroundColor: !disabled ? '#F1F5F9' : '#fff',
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, color: !disabled ? '#1e293b' : '#64748b', fontFamily: FONT_FAMILY }}>Aktiv</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setDisabled(true)}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 12,
+                      borderRadius: D.buttonRadius,
+                      borderWidth: 1,
+                      borderColor: disabled ? '#1e293b' : '#E2E8F0',
+                      backgroundColor: disabled ? '#F1F5F9' : '#fff',
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, color: disabled ? '#1e293b' : '#64748b', fontFamily: FONT_FAMILY }}>Inaktiv</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
+          </View>
+        </View>
+
+        {errorMessage ? (
+          <View style={{ marginTop: 6, padding: 8, borderRadius: D.inputRadius, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' }}>
+            <Text style={{ fontSize: 12, color: '#b91c1c', fontFamily: FONT_FAMILY }}>{errorMessage}</Text>
+          </View>
+        ) : null}
+      </ScrollView>
+
+      {(saving || saveSuccess) && (
+        <View
+          pointerEvents="auto"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            top: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(255,255,255,0.96)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 10,
+            borderRadius: 0,
+          }}
+        >
+          {saving ? (
+            <UserEditSavingOverlay isNew={isNew} />
+          ) : saveSuccess ? (
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              paddingVertical: 16,
+              paddingHorizontal: 24,
+              borderRadius: 12,
+              backgroundColor: '#166534',
+              ...(Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(0,0,0,0.15)' } : { elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4 }),
+            }}>
+              <Ionicons name="checkmark-circle" size={28} color="#fff" />
+              <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff', fontFamily: FONT_FAMILY }}>
+                {isNew ? 'Användaren skapad' : 'Användaren uppdaterad'}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      )}
+
+      {Platform.OS === 'web' ? (
+        <input
+          ref={avatarUploadInputRef}
+          type="file"
+          accept="image/*"
+          style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', width: 0, height: 0 }}
+          onChange={onAvatarFileSelected}
+        />
+      ) : null}
+      </View>
+    </ModalBase>
   );
 }

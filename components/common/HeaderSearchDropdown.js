@@ -1,5 +1,101 @@
-import { Animated, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import React from 'react';
+import {
+  Animated,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { getProjectPhase } from '../../features/projects/constants';
+import { LEFT_NAV } from '../../constants/leftNavTheme';
+
+const MAX_VISIBLE_RESULTS = 8;
+const DROPDOWN_MAX_WIDTH = 480;
+const DROPDOWN_BORDER_RADIUS = 10;
+const DROPDOWN_SHADOW = {
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.12,
+  shadowRadius: 12,
+  elevation: 8,
+};
+
+const styles = StyleSheet.create({
+  overlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 99998,
+    backgroundColor: 'rgba(0,0,0,0)',
+  },
+  dropdownWrapper: {
+    position: 'absolute',
+    alignItems: 'flex-start',
+    marginTop: 0,
+    paddingTop: 0,
+  },
+  dropdownWrapperWeb: {
+    position: 'fixed',
+  },
+  dropdown: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#fff',
+    borderRadius: DROPDOWN_BORDER_RADIUS,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    ...DROPDOWN_SHADOW,
+    marginTop: 0,
+    paddingTop: 0,
+  },
+  scroll: {
+    maxHeight: 320,
+  },
+  scrollContent: {
+    paddingTop: 0,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: LEFT_NAV.rowPaddingVertical,
+    paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
+    minHeight: LEFT_NAV.rowMinHeight,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#f1f5f9',
+  },
+  rowHover: {
+    backgroundColor: LEFT_NAV.hoverBg,
+  },
+  rowSelected: {
+    backgroundColor: LEFT_NAV.hoverBg,
+  },
+  phaseDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: LEFT_NAV.rowIconGap,
+    borderWidth: 1,
+    borderColor: LEFT_NAV.phaseDotBorder,
+  },
+  rowLabel: {
+    fontSize: LEFT_NAV.rowFontSize,
+    color: LEFT_NAV.textDefault,
+    fontWeight: '400',
+    flex: 1,
+    minWidth: 0,
+  },
+  emptyText: {
+    color: LEFT_NAV.textMuted,
+    fontSize: LEFT_NAV.rowFontSize,
+    textAlign: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
+  },
+});
 
 export function HeaderSearchDropdown({
   headerProjectQuery,
@@ -10,128 +106,117 @@ export function HeaderSearchDropdown({
   headerProjectMatches,
   hoveredProjectId,
   setHoveredProjectId,
+  selectedIndex,
+  setSelectedIndex,
   dropdownAnim,
   navigation,
   requestProjectSwitch,
   createPortal,
   portalRootId,
 }) {
+  const inputWidth = Number(headerSearchWidth) || 200;
+  const displayMatches = Array.isArray(headerProjectMatches)
+    ? headerProjectMatches.slice(0, MAX_VISIBLE_RESULTS)
+    : [];
+
+  const closeDropdown = React.useCallback(() => {
+    try {
+      navigation?.setParams?.({
+        headerSearchOpen: false,
+        headerSearchKeepConnected: false,
+      });
+    } catch (_e) {}
+  }, [navigation]);
+
+  const selectProject = React.useCallback(
+    (proj) => {
+      if (!proj) return;
+      closeDropdown();
+      requestProjectSwitch(proj, { selectedAction: null });
+    },
+    [closeDropdown, requestProjectSwitch]
+  );
+
   if (!headerProjectQuery || !headerSearchOpen) {
     return null;
   }
 
+  const dropdownPosition = {
+    top: headerSearchBottom ?? 0,
+    left: headerSearchLeft ?? 0,
+    minWidth: Math.min(inputWidth, DROPDOWN_MAX_WIDTH),
+    maxWidth: DROPDOWN_MAX_WIDTH,
+  };
+
   const innerDropdown = (
     <View
-      style={{
-        pointerEvents: 'auto',
-        position: Platform.OS === 'web' ? 'fixed' : 'absolute',
-        top: Platform.OS === 'web' ? headerSearchBottom : 8,
-        left: Platform.OS === 'web' && headerSearchLeft !== null ? headerSearchLeft : 0,
-        zIndex: 99999,
-        alignItems: 'flex-start',
-        marginTop: 0,
-        paddingTop: 0,
-      }}
-   >
+      style={[
+        styles.dropdownWrapper,
+        Platform.OS === 'web' && styles.dropdownWrapperWeb,
+        {
+          top: dropdownPosition.top,
+          left: dropdownPosition.left,
+          zIndex: 99999,
+          pointerEvents: 'auto',
+        },
+      ]}
+    >
       <Animated.View
-        style={{
-          width: headerSearchWidth || 560,
-          backgroundColor: '#fff',
-          borderRadius: 16,
-          borderTopLeftRadius: 0,
-          borderTopRightRadius: 0,
-          overflow: 'hidden',
-          borderLeftWidth: 1,
-          borderRightWidth: 1,
-          borderBottomWidth: 1,
-          borderTopWidth: 0,
-          borderColor: '#666',
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 6 },
-          shadowOpacity: 0.18,
-          shadowRadius: 14,
-          elevation: 10,
-          marginTop: 0,
-          paddingTop: 0,
-          opacity: Platform.OS === 'web' ? dropdownAnim : 1,
-          transform:
-            Platform.OS === 'web'
-              ? [
-                  {
-                    scale: dropdownAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.995, 1],
-                    }),
-                  },
-                ]
-              : undefined,
-        }}
+        style={[
+          styles.dropdown,
+          {
+            minWidth: dropdownPosition.minWidth,
+            maxWidth: dropdownPosition.maxWidth,
+            opacity: Platform.OS === 'web' ? dropdownAnim : 1,
+            transform:
+              Platform.OS === 'web' && dropdownAnim
+                ? [
+                    {
+                      scale: dropdownAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.995, 1],
+                      }),
+                    },
+                  ]
+                : undefined,
+          },
+        ]}
       >
         <ScrollView
-          style={{ maxHeight: 320 }}
-          contentContainerStyle={{ paddingTop: 0 }}
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
         >
-          {headerProjectMatches.map(proj => (
-            <TouchableOpacity
-              key={proj.id}
-              onMouseEnter={Platform.OS === 'web' ? () => setHoveredProjectId(proj.id) : undefined}
-              onMouseLeave={Platform.OS === 'web' ? () => setHoveredProjectId(null) : undefined}
-              style={{
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                borderBottomWidth: 1,
-                borderColor: '#f0f0f0',
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor:
-                  Platform.OS === 'web' && hoveredProjectId === proj.id ? '#F7FBFF' : '#fff',
-              }}
-              activeOpacity={0.8}
-              onPress={() => {
-                if (Platform.OS === 'web') {
-                  try {
-                    navigation?.setParams?.({
-                      headerSearchOpen: false,
-                      headerSearchKeepConnected: false,
-                    });
-                  } catch (_e) {}
-                }
-                requestProjectSwitch(proj, { selectedAction: null });
-              }}
-            >
-              <View
-                style={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: 6,
-                  backgroundColor: getProjectPhase(proj)?.color || '#43A047',
-                  marginRight: 10,
-                  borderWidth: 1,
-                  borderColor: '#bbb',
-                }}
-              />
-              <Text
-                style={{ fontSize: 15, color: '#222', fontWeight: '600', flexShrink: 1 }}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {proj.id} - {proj.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {displayMatches.map((proj, index) => {
+            const isHovered = hoveredProjectId === proj.id;
+            const isSelected = selectedIndex === index;
+            const highlight = isHovered || isSelected;
 
-          {headerProjectMatches.length === 0 ? (
-            <Text
-              style={{
-                color: '#888',
-                fontSize: 15,
-                textAlign: 'center',
-                paddingVertical: 14,
-              }}
-            >
-              Inga projekt hittades.
-            </Text>
+            return (
+              <TouchableOpacity
+                key={proj.id}
+                onMouseEnter={Platform.OS === 'web' ? () => setHoveredProjectId(proj.id) : undefined}
+                onMouseLeave={Platform.OS === 'web' ? () => setHoveredProjectId(null) : undefined}
+                style={[styles.row, highlight && (Platform.OS === 'web' ? styles.rowHover : styles.rowSelected)]}
+                activeOpacity={0.8}
+                onPress={() => selectProject(proj)}
+              >
+                <View
+                  style={[
+                    styles.phaseDot,
+                    { backgroundColor: getProjectPhase(proj)?.color || LEFT_NAV.phaseDotFallback },
+                  ]}
+                />
+                <Text style={styles.rowLabel} numberOfLines={1} ellipsizeMode="tail">
+                  {proj.id} - {proj.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+
+          {displayMatches.length === 0 ? (
+            <Text style={styles.emptyText}>Inga projekt hittades.</Text>
           ) : null}
         </ScrollView>
       </Animated.View>
@@ -142,25 +227,8 @@ export function HeaderSearchDropdown({
     <>
       <View
         onStartShouldSetResponder={() => true}
-        onResponderRelease={() => {
-          if (Platform.OS === 'web') {
-            try {
-              navigation?.setParams?.({
-                headerSearchOpen: false,
-                headerSearchKeepConnected: false,
-              });
-            } catch (_e) {}
-          }
-        }}
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 99998,
-          backgroundColor: 'rgba(0,0,0,0)',
-        }}
+        onResponderRelease={closeDropdown}
+        style={styles.overlay}
       />
       {innerDropdown}
     </>

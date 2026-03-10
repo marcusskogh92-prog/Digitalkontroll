@@ -1,4 +1,4 @@
-import SharePointFolderFileArea from '@components/common/SharePointFiles/SharePointFolderFileArea';
+import DigitalkontrollsUtforskare from '@components/common/DigitalkontrollsUtforskare';
 
 function safeText(v) {
   if (v === null || v === undefined) return '';
@@ -15,6 +15,8 @@ export default function FFUFileListView({
   ffuSelectedItemId = null,
   setFfuSelectedItemId = null,
   bumpFfuMirrorRefreshNonce = null,
+  showCreateFolderButton = true,
+  hiddenCustomFolderNames = [],
 }) {
   const basePath = safeText(
     project?.rootFolderPath ||
@@ -29,15 +31,15 @@ export default function FFUFileListView({
   const rootPath = `${basePath}/${FORFRAGNINGSUNDERLAG_FOLDER}`.replace(/^\/+/, '').replace(/\/+/, '/');
 
   return (
-    <SharePointFolderFileArea
+    <DigitalkontrollsUtforskare
       companyId={companyId}
       project={project}
       title="Förfrågningsunderlag"
       subtitle="SharePoint (källan till sanning)"
       breadcrumbBaseSegments={[FORFRAGNINGSUNDERLAG_FOLDER]}
-      showCreateFolderButton
+      showCreateFolderButton={showCreateFolderButton}
       iconName="folder-outline"
-      hiddenFolderNames={['AI-sammanställning']}
+      hiddenFolderNames={['AI-sammanställning', ...(Array.isArray(hiddenCustomFolderNames) ? hiddenCustomFolderNames : [])]}
       rootPath={rootPath}
       scopeRootPath={rootPath}
       relativePath={ffuRelativePath}
@@ -45,6 +47,7 @@ export default function FFUFileListView({
       selectedItemId={ffuSelectedItemId}
       onSelectedItemIdChange={typeof setFfuSelectedItemId === 'function' ? setFfuSelectedItemId : null}
       onDidMutate={typeof bumpFfuMirrorRefreshNonce === 'function' ? bumpFfuMirrorRefreshNonce : null}
+      bottomDropZone
     />
   );
 }

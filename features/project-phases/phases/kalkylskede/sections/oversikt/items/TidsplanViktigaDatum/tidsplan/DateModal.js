@@ -9,8 +9,10 @@ import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { MODAL_DESIGN_2026 as D } from '../../../../../../../../../constants/modalDesign2026';
 import ActivityParticipantPickerModal from '../../../../../../../../../components/common/ActivityParticipants/ActivityParticipantPickerModal';
 import IsoDatePickerModal from '../../../../../../../../../components/common/Modals/IsoDatePickerModal';
+import { useDraggableResizableModal } from '../../../../../../../../../hooks/useDraggableResizableModal';
 
 import TimeField, { isValidTimeHHMM, timeToMinutes } from './TimeField';
 
@@ -312,52 +314,100 @@ function OccurrenceEditModal({
 }) {
   const minEndDropdownMinutes = React.useMemo(() => getMinEndDropdownMinutes(startTime), [startTime]);
 
+  const { boxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(!!visible, {
+    defaultWidth: 560,
+    defaultHeight: 520,
+    minWidth: 380,
+    minHeight: 360,
+  });
+
+  React.useEffect(() => {
+    if (!visible || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const handleKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleKey, true);
+    return () => document.removeEventListener('keydown', handleKey, true);
+  }, [visible, onClose]);
+
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable
         onPress={onClose}
-        style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.30)', padding: 16, justifyContent: 'center' }}
+        style={[
+          { flex: 1, backgroundColor: D.overlayBg || 'rgba(0,0,0,0.35)', padding: 16, justifyContent: 'center' },
+          overlayStyle,
+        ]}
       >
         <Pressable
           onPress={(e) => e.stopPropagation()}
-          style={{
-            width: '100%',
-            maxWidth: 720,
-            maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
-            alignSelf: 'center',
-            backgroundColor: '#fff',
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: '#E2E8F0',
-            overflow: 'hidden',
-            ...(Platform.OS === 'web' ? { boxShadow: '0 10px 30px rgba(0,0,0,0.18)' } : {}),
-          }}
+          style={[
+            {
+              width: '100%',
+              maxWidth: 720,
+              maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
+              alignSelf: 'center',
+              backgroundColor: '#fff',
+              borderRadius: D.radius ?? 8,
+              borderWidth: 1,
+              borderColor: '#E2E8F0',
+              overflow: 'hidden',
+              ...(Platform.OS === 'web' ? { boxShadow: D.shadow ?? '0 10px 30px rgba(0,0,0,0.08)' } : { ...D.shadowNative, elevation: 8 }),
+            },
+            boxStyle,
+          ]}
         >
-          <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <View
+            style={[
+              D.headerNeutral,
+              D.headerNeutralCompact,
+              { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+              headerProps.style,
+            ]}
+            {...(Platform.OS === 'web' ? { onMouseDown: headerProps.onMouseDown } : {})}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+              <View style={{
+                width: D.headerNeutralCompactIconSize ?? 22,
+                height: D.headerNeutralCompactIconSize ?? 22,
+                borderRadius: 6,
+                backgroundColor: 'rgba(255,255,255,0.15)',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                <Ionicons name="calendar-outline" size={D.headerNeutralCompactIconPx ?? 14} color="#fff" />
+              </View>
               <View style={{ minWidth: 0, flex: 1 }}>
-                <Text style={{ fontSize: 14, fontWeight: fwMed, color: colors.text }} numberOfLines={1}>
-                  {label}
-                </Text>
-                <Text style={{ fontSize: 12, color: colors.textSubtle, marginTop: 2 }} numberOfLines={1}>
-                  {iso}
+                <Text
+                  style={{
+                    fontSize: D.headerNeutralCompactTitleFontSize ?? 12,
+                    fontWeight: D.headerNeutralCompactTitleFontWeight ?? '400',
+                    lineHeight: D.headerNeutralCompactTitleLineHeight ?? 16,
+                    color: D.headerNeutralTextColor ?? '#fff',
+                  }}
+                  numberOfLines={1}
+                >
+                  {label}{iso ? ` – ${iso}` : ''}
                 </Text>
               </View>
-
-              <Pressable
-                onPress={onClose}
-                style={({ hovered, pressed }) => ({
-                  padding: 6,
-                  borderRadius: 8,
-                  backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.18)' : 'transparent',
-                })}
-              >
-                <Ionicons name="close" size={18} color="#64748B" />
-              </Pressable>
             </View>
+            <Pressable
+              onPress={onClose}
+              style={({ hovered, pressed }) => [
+                D.closeBtn,
+                (hovered || pressed) ? { backgroundColor: D.headerNeutralCloseBtnHover } : null,
+                Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+              ]}
+            >
+              <Ionicons name="close" size={D.headerNeutralCompactCloseIconPx ?? 18} color={D.headerNeutralCloseIconColor ?? '#fff'} />
+            </Pressable>
           </View>
 
-          <ScrollView contentContainerStyle={{ padding: 14, gap: 12 }} keyboardShouldPersistTaps="handled">
+          <ScrollView contentContainerStyle={{ padding: D.contentPadding ?? 20, gap: 12 }} keyboardShouldPersistTaps="handled">
             <View style={{ gap: 6 }}>
               <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>Titel</Text>
               <TextInput
@@ -367,12 +417,12 @@ function OccurrenceEditModal({
                 placeholderTextColor="#94A3B8"
                 style={{
                   borderWidth: 1,
-                  borderColor: '#E2E8F0',
-                  borderRadius: 10,
-                  paddingVertical: 9,
+                  borderColor: '#ddd',
+                  borderRadius: D.inputRadius ?? 6,
+                  paddingVertical: 8,
                   paddingHorizontal: 10,
                   fontSize: 13,
-                  color: '#0F172A',
+                  color: '#1e293b',
                   backgroundColor: '#fff',
                   ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
                 }}
@@ -403,48 +453,49 @@ function OccurrenceEditModal({
                 <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>Deltagare</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   {!canCopyFromFirst ? null : (
-                    <Pressable
-                      onPress={onCopyFromFirst}
-                      style={({ hovered, pressed }) => ({
-                        paddingVertical: 7,
-                        paddingHorizontal: 10,
-                        borderRadius: 10,
-                        borderWidth: 1,
-                        borderColor: '#CBD5E1',
-                        backgroundColor: hovered || pressed ? '#F8FAFC' : '#fff',
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 8,
-                      })}
-                    >
-                      <Ionicons name="copy-outline" size={15} color="#64748B" />
-                      <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>
-                        {String(copyFromFirstLabel || 'Kopiera från tillfälle 1')}
-                      </Text>
-                    </Pressable>
-                  )}
+                  <Pressable
+                    onPress={onCopyFromFirst}
+                    style={({ hovered, pressed }) => ({
+                      paddingVertical: D.buttonPaddingVertical ?? 6,
+                      paddingHorizontal: D.buttonPaddingHorizontal ?? 12,
+                      borderRadius: D.buttonRadius ?? 6,
+                      borderWidth: 1,
+                      borderColor: '#ddd',
+                      backgroundColor: hovered || pressed ? '#F8FAFC' : '#fff',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 8,
+                      ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                    })}
+                  >
+                    <Ionicons name="copy-outline" size={15} color="#64748B" />
+                    <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>
+                      {String(copyFromFirstLabel || 'Kopiera från tillfälle 1')}
+                    </Text>
+                  </Pressable>
+                )}
 
                   <Pressable
                     onPress={onEditParticipants}
                     style={({ hovered, pressed }) => ({
-                      paddingVertical: 7,
-                      paddingHorizontal: 10,
-                      borderRadius: 10,
-                      borderWidth: 1,
-                      borderColor: colors.blue,
-                      backgroundColor: hovered || pressed ? colors.blueHover : colors.blue,
+                      paddingVertical: D.buttonPaddingVertical ?? 6,
+                      paddingHorizontal: D.buttonPaddingHorizontal ?? 12,
+                      borderRadius: D.buttonRadius ?? 6,
+                      borderWidth: 0,
+                      backgroundColor: hovered || pressed ? 'rgba(45, 58, 75, 0.85)' : (D.buttonPrimaryBg ?? '#2D3A4B'),
                       flexDirection: 'row',
                       alignItems: 'center',
                       gap: 8,
+                      ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                     })}
                   >
                     <Ionicons name="people-outline" size={15} color="#fff" />
-                    <Text style={{ fontSize: 12, fontWeight: fwMed, color: '#fff' }}>Lägg till deltagare</Text>
+                    <Text style={{ fontSize: 12, fontWeight: D.buttonPrimaryFontWeight ?? '500', color: D.buttonPrimaryColor ?? '#fff' }}>Lägg till deltagare</Text>
                   </Pressable>
                 </View>
               </View>
 
-              <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, backgroundColor: '#fff', overflow: 'hidden' }}>
+              <View style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: D.inputRadius ?? 6, backgroundColor: '#fff', overflow: 'hidden' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 10, backgroundColor: colors.bgMuted, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
                   <Text style={{ flex: 1.2, fontSize: 11, fontWeight: fwMed, color: colors.textSubtle }}>Namn</Text>
                   <Text style={{ flex: 1.4, fontSize: 11, fontWeight: fwMed, color: colors.textSubtle }}>E-post</Text>
@@ -492,21 +543,23 @@ function OccurrenceEditModal({
             </View>
           </ScrollView>
 
-          <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#EEF2F7', flexDirection: 'row', justifyContent: 'flex-end' }}>
+          <View style={[D.footer, { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 10 }]}>
             <Pressable
               onPress={onClose}
               style={({ hovered, pressed }) => ({
-                paddingVertical: 8,
-                paddingHorizontal: 12,
-                borderRadius: 10,
-                borderWidth: 1,
-                borderColor: '#CBD5E1',
-                backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.14)' : '#fff',
+                paddingVertical: D.buttonPaddingVertical ?? 6,
+                paddingHorizontal: D.buttonPaddingHorizontal ?? 12,
+                borderRadius: D.buttonRadius ?? 6,
+                borderWidth: 0,
+                backgroundColor: hovered || pressed ? 'rgba(45, 58, 75, 0.85)' : (D.buttonPrimaryBg ?? '#2D3A4B'),
+                minWidth: 96,
+                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
               })}
             >
-              <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textMuted }}>Klar</Text>
+              <Text style={{ fontSize: 12, fontWeight: D.buttonPrimaryFontWeight ?? '500', color: D.buttonPrimaryColor ?? '#fff' }}>Klar</Text>
             </Pressable>
           </View>
+          {resizeHandles}
         </Pressable>
       </Pressable>
     </Modal>
@@ -538,10 +591,9 @@ export default function DateModal({
   }, [initial?.source]);
   const initialDateLocked = React.useMemo(() => {
     if (!isProjectInfo) return false;
-    // Backwards compatibility: treat missing locked as locked.
-    if (typeof initial?.locked === 'boolean') return initial.locked;
-    return true;
-  }, [initial?.locked, isProjectInfo]);
+    // Projektinformation-datum ska kunna flyttas i både Projektöversikt och Tidsplan – alltid redigerbart.
+    return false;
+  }, [isProjectInfo]);
 
   const [dateLocked, setDateLocked] = React.useState(false);
   const lockTooltip = 'Datumet styrs från Projektinformationen';
@@ -567,11 +619,36 @@ export default function DateModal({
 
   const [participants, setParticipants] = React.useState([]);
   const [participantsModalOpen, setParticipantsModalOpen] = React.useState(false);
+  const [location, setLocation] = React.useState('');
 
   const handleClose = React.useCallback(() => {
     setActiveDropdown(null);
     safeOnClose();
   }, [safeOnClose]);
+
+  React.useEffect(() => {
+    if (!visible || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (activeDropdown) {
+        setActiveDropdown(null);
+        return;
+      }
+      if (datePickerOpen || participantsModalOpen || occurrenceEdit?.open) return;
+      e.preventDefault();
+      e.stopPropagation();
+      handleClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [visible, handleClose, activeDropdown, datePickerOpen, participantsModalOpen, occurrenceEdit?.open]);
+
+  const { boxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(!!visible, {
+    defaultWidth: 820,
+    defaultHeight: 680,
+    minWidth: 420,
+    minHeight: 400,
+  });
 
   const warningColor = '#D97706';
 
@@ -854,6 +931,7 @@ export default function DateModal({
     closeOccurrenceEdit();
 
     setParticipants(normalizeParticipants(initial?.participants));
+    setLocation(String(initial?.location || '').trim());
 
     // Single entry point modal.
 
@@ -938,56 +1016,94 @@ export default function DateModal({
 
   return (
     <>
-      <Modal visible={!!visible} transparent animationType="fade" onRequestClose={handleClose}>
+      <Modal
+        visible={!!visible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (occurrenceEdit?.open) return;
+          handleClose();
+        }}
+      >
         <Pressable
           onPress={handleClose}
-          style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.30)', padding: 16, justifyContent: 'center' }}
+          style={[
+            { flex: 1, backgroundColor: D.overlayBg || 'rgba(0,0,0,0.35)', padding: 16, justifyContent: 'center' },
+            overlayStyle,
+          ]}
         >
           <Pressable
             onPress={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: 820,
-              height: Platform.OS === 'web' ? '90vh' : '90%',
-              maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
-              alignSelf: 'center',
-              backgroundColor: '#fff',
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: '#E2E8F0',
-              overflow: 'hidden',
-              ...(Platform.OS === 'web' ? { boxShadow: '0 10px 30px rgba(0,0,0,0.18)' } : {}),
-            }}
+            style={[
+              {
+                width: '100%',
+                maxWidth: 820,
+                height: Platform.OS === 'web' ? '90vh' : '90%',
+                maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
+                alignSelf: 'center',
+                backgroundColor: '#fff',
+                borderRadius: D.radius ?? 8,
+                borderWidth: 1,
+                borderColor: '#E2E8F0',
+                overflow: 'hidden',
+                ...(Platform.OS === 'web' ? { boxShadow: D.shadow ?? '0 10px 30px rgba(0,0,0,0.08)' } : { ...D.shadowNative, elevation: 8 }),
+              },
+              boxStyle,
+            ]}
           >
             <View pointerEvents="box-none" style={{ flex: 1 }}>
-            <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                  <Ionicons name="calendar-outline" size={18} color={colors.textSubtle} />
-                  <View style={{ minWidth: 0, flex: 1 }}>
-                    <Text style={{ fontSize: 14, fontWeight: fwMed, color: colors.text }} numberOfLines={1}>
-                      {initial?.id ? 'Redigera datum' : 'Nytt datum'}
-                    </Text>
-                    <Text style={{ fontSize: 12, color: colors.textSubtle }} numberOfLines={1}>
-                      Tidsplan och viktiga datum
-                    </Text>
-                  </View>
+            <View
+              style={[
+                D.headerNeutral,
+                D.headerNeutralCompact,
+                { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+                headerProps.style,
+              ]}
+              {...(Platform.OS === 'web' ? { onMouseDown: headerProps.onMouseDown } : {})}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                <View style={{
+                  width: D.headerNeutralCompactIconSize ?? 22,
+                  height: D.headerNeutralCompactIconSize ?? 22,
+                  borderRadius: 6,
+                  backgroundColor: 'rgba(255,255,255,0.15)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <Ionicons name="calendar-outline" size={D.headerNeutralCompactIconPx ?? 14} color="#fff" />
                 </View>
-
-                <Pressable
-                  onPress={handleClose}
-                  style={({ hovered, pressed }) => ({
-                    padding: 6,
-                    borderRadius: 8,
-                    backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.18)' : 'transparent',
-                  })}
+                <Text
+                  style={{
+                    fontSize: D.headerNeutralCompactTitleFontSize ?? 12,
+                    fontWeight: D.headerNeutralCompactTitleFontWeight ?? '400',
+                    lineHeight: D.headerNeutralCompactTitleLineHeight ?? 16,
+                    color: D.headerNeutralTextColor ?? '#fff',
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                  numberOfLines={1}
                 >
-                  <Ionicons name="close" size={18} color={colors.textSubtle} />
-                </Pressable>
+                  {initial?.id ? 'Redigera datum' : 'Nytt datum'}
+                  {' — Tidsplan och viktiga datum'}
+                </Text>
               </View>
+              <Pressable
+                onPress={handleClose}
+                style={({ hovered, pressed }) => [
+                  D.closeBtn,
+                  (hovered || pressed) ? { backgroundColor: D.headerNeutralCloseBtnHover } : null,
+                  Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+                ]}
+              >
+                <Ionicons name="close" size={D.headerNeutralCompactCloseIconPx ?? 18} color="#fff" />
+              </Pressable>
             </View>
 
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, gap: 12 }} keyboardShouldPersistTaps="handled">
+            <ScrollView
+              style={[ { flex: 1 }, Platform.OS === 'web' ? { overflowY: 'scroll' } : null ]}
+              contentContainerStyle={{ padding: D.contentPadding ?? 20, gap: 12 }}
+              keyboardShouldPersistTaps="handled"
+            >
               <View
                 style={{
                   gap: 10,
@@ -1096,6 +1212,12 @@ export default function DateModal({
 
                   {!isSeries ? null : selectedDates.length === 0 ? (
                     <Text style={{ fontSize: 12, color: colors.danger }}>Välj datum.</Text>
+                  ) : null}
+
+                  {!isSeries && isValidIsoDate(date) ? (
+                    <Text style={{ fontSize: 13, fontWeight: fwMed, color: colors.text }}>
+                      {new Date(date + 'T12:00:00').toLocaleDateString('sv-SE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                    </Text>
                   ) : null}
 
                   {!isProjectInfo || !dateLocked || isSeries ? null : (
@@ -1357,6 +1479,36 @@ export default function DateModal({
                   backgroundColor: colors.bgMuted,
                 }}
               >
+                <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>Plats (valfritt)</Text>
+                <TextInput
+                  value={location}
+                  onChangeText={setLocation}
+                  placeholder="T.ex. kontor, adress eller Teams-länk"
+                  placeholderTextColor="#94A3B8"
+                  style={{
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    borderRadius: 10,
+                    paddingVertical: 9,
+                    paddingHorizontal: 10,
+                    fontSize: 13,
+                    color: colors.text,
+                    backgroundColor: '#fff',
+                    ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
+                  }}
+                />
+              </View>
+
+              <View
+                style={{
+                  gap: 10,
+                  padding: 12,
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                  borderRadius: 12,
+                  backgroundColor: colors.bgMuted,
+                }}
+              >
                 <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>Beskrivning (valfritt)</Text>
                 <TextInput
                   value={description}
@@ -1501,15 +1653,16 @@ export default function DateModal({
                 <Pressable
                   onPress={handleClose}
                   style={({ hovered, pressed }) => ({
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 10,
+                    paddingVertical: D.buttonPaddingVertical ?? 6,
+                    paddingHorizontal: 10,
+                    borderRadius: D.buttonRadius ?? 6,
                     borderWidth: 1,
-                    borderColor: '#CBD5E1',
-                    backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.14)' : '#fff',
+                    borderColor: '#fecaca',
+                    backgroundColor: hovered || pressed ? '#fee2e2' : '#fef2f2',
+                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                   })}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textMuted }}>Avbryt</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '500', color: '#b91c1c' }}>Avbryt</Text>
                 </Pressable>
 
                 <Pressable
@@ -1600,6 +1753,7 @@ export default function DateModal({
                         ? String(initial?.type || initial?.customType || 'Viktigt datum').trim()
                         : String(title || '').trim(),
                       description: String(description || '').trim(),
+                      location: String(location || '').trim(),
                       date: isSeries ? '' : String(date || '').trim(),
                       dates: isSeries ? selectedDates : [],
                       allowMulti: !!isSeries,
@@ -1624,22 +1778,25 @@ export default function DateModal({
                   disabled={!canSave}
                   style={({ hovered, pressed }) => {
                     const disabled = !canSave;
+                    const primaryBg = D.buttonPrimaryBg ?? '#2D3A4B';
+                    const primaryHover = 'rgba(45, 58, 75, 0.85)';
                     return {
-                      paddingVertical: 8,
-                      paddingHorizontal: 12,
-                      borderRadius: 10,
-                      borderWidth: 1,
-                      borderColor: disabled ? '#E2E8F0' : colors.blue,
-                      backgroundColor: disabled ? '#F1F5F9' : (hovered || pressed ? colors.blueHover : colors.blue),
-                      opacity: disabled ? 0.85 : 1,
+                      paddingVertical: D.buttonPaddingVertical ?? 6,
+                      paddingHorizontal: D.buttonPaddingHorizontal ?? 12,
+                      borderRadius: D.buttonRadius ?? 6,
+                      borderWidth: 0,
+                      backgroundColor: disabled ? '#9CA3AF' : (hovered || pressed ? primaryHover : primaryBg),
+                      opacity: disabled ? 0.7 : 1,
+                      ...(Platform.OS === 'web' ? { cursor: disabled ? 'not-allowed' : 'pointer' } : {}),
                     };
                   }}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: fwMed, color: '#fff' }}>Spara</Text>
+                  <Text style={{ fontSize: 12, fontWeight: D.buttonPrimaryFontWeight ?? '500', color: D.buttonPrimaryColor ?? '#fff' }}>Spara</Text>
                 </Pressable>
               </View>
             </View>
             </View>
+            {resizeHandles}
           </Pressable>
         </Pressable>
       </Modal>

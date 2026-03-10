@@ -1,5 +1,6 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 function safeText(value) {
   if (value === null || value === undefined) return '';
@@ -29,8 +30,11 @@ export default function ContactPickerInline({
   disabled,
   onPick,
   onCreate,
+  compact,
+  currentContactName,
 }) {
   const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
   const queryKey = normalizeKey(q);
   const sid = safeText(supplierId);
 

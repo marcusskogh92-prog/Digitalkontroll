@@ -78,10 +78,23 @@ function getFileTypeLabel(ext) {
   return e.toUpperCase();
 }
 
-function buildOfficeViewerUrl(sourceUrl) {
+/**
+ * Bygger Office-embed-URL. Försöker maximera interaktivitet (embedview, wdAllowInteractivity).
+ * OBS: Microsofts embed är ofta skrivskyddad i iframe – full redigering kräver "Öppna i ny flik".
+ */
+function buildOfficeViewerUrl(sourceUrl, fileName = '') {
   const src = safeText(sourceUrl);
   if (!src) return '';
-  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(src)}`;
+  const base = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(src)}`;
+  const ext = (fileName && fileExtFromName(fileName) || '').toLowerCase();
+  const params = new URLSearchParams();
+  params.set('action', 'embedview');
+  params.set('wdAllowInteractivity', 'true');
+  if (ext === 'xlsx' || ext === 'xls') {
+    params.set('wdHideSheetTabs', 'false');
+  }
+  const qs = params.toString();
+  return qs ? `${base}&${qs}` : base;
 }
 
 function clamp(n, min, max) {
@@ -1007,10 +1020,15 @@ export default function SharePointFilePreviewPane({
                 <View style={styles.officeIframeWrap} pointerEvents="box-none">
                   <iframe
                     title={name || 'Office'}
-                    src={buildOfficeViewerUrl(preferredUrl)}
+                    src={buildOfficeViewerUrl(preferredUrl, name)}
                     style={{ width: '100%', height: '100%', border: 0, background: '#fff', pointerEvents: 'auto' }}
                     allow="fullscreen"
                   />
+                </View>
+                <View style={styles.officeEditHint}>
+                  <Text style={styles.officeEditHintText}>
+                    Förhandsgranskningen kan vara skrivskyddad. För att redigera (skriva i celler m.m.), klicka på «Öppna i ny flik» i toppen.
+                  </Text>
                 </View>
               </View>
             </View>
@@ -1204,6 +1222,19 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     width: '100%',
+  },
+  officeEditHint: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexShrink: 0,
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  officeEditHintText: {
+    fontSize: 11,
+    color: '#64748b',
+    textAlign: 'center',
   },
   bodyCentered: {
     flex: 1,

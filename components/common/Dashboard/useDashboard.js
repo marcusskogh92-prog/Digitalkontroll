@@ -1,8 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
-import { storage, subscribeCompanyActivity, subscribeCompanyProjectOrganisation, subscribeCompanyProjects } from '../../firebase';
+import { db, storage, subscribeCompanyActivity, subscribeCompanyProjectOrganisation, subscribeCompanyProjects } from '../../firebase';
 import { computeControlsToSign, computeOpenDeviationsCount, countActiveProjectsInHierarchy, countOpenDeviationsForControl, formatRelativeTime, resolveProjectId, toTsMs } from './dashboardUtils';
 
 /**
@@ -14,6 +15,8 @@ export function useDashboard({
   routeCompanyId,
   authClaims,
   currentUserId,
+  /** Användarens e-post – för att matcha kontaktmedlemmar i Organisation och roller. */
+  currentUserEmail,
   hierarchy,
   hierarchyRef,
   selectedProject,
@@ -41,6 +44,7 @@ export function useDashboard({
   const [dashboardControlsToSignItems, setDashboardControlsToSignItems] = useState([]);
   const [dashboardOpenDeviationItems, setDashboardOpenDeviationItems] = useState([]);
   const [dashboardUpcomingSkyddsrondItems, setDashboardUpcomingSkyddsrondItems] = useState([]);
+  const [dashboardUpcomingTimelineItems, setDashboardUpcomingTimelineItems] = useState([]);
   const [dashboardDropdownAnchor, setDashboardDropdownAnchor] = useState('overview');
   const [dashboardDropdownTop, setDashboardDropdownTop] = useState(null);
   const [dashboardDropdownRowKey, setDashboardDropdownRowKey] = useState(null);
@@ -76,9 +80,11 @@ export function useDashboard({
   useEffect(() => {
     const cid = String(companyId || routeCompanyId || authClaims?.companyId || '').trim();
     const uid = String(currentUserId || '').trim();
+    const userEmail = String(currentUserEmail || '').trim().toLowerCase();
+    const normEmail = (e) => String(e || '').trim().toLowerCase().replace(/\s+/g, '');
 
     if (DEBUG_MEMBERSHIP) {
-      console.log('[dashboard][membership] subscribe start', { cid, uid, isAdmin });
+      console.log('[dashboard][membership] subscribe start', { cid, uid, isAdmin, hasEmail: !!userEmail });
     }
 
     if (!cid || !uid) {
@@ -140,6 +146,8 @@ export function useDashboard({
 
               for (const m of members) {
                 const refId = String(m?.refId || m?.uid || m?.userId || '').trim();
+                const matchByUid = refId && refId === uid;
+                const matchByEmail = userEmail && String(m?.source || '').trim() === 'contact' && normEmail(m?.email) === userEmail;
                 if (DEBUG_MEMBERSHIP) {
                   compareCount += 1;
                   if (compareCount <= 500) {
@@ -147,16 +155,14 @@ export function useDashboard({
                       currentUserId: uid,
                       memberRefId: refId,
                       memberSource: m?.source,
-                      memberRole: m?.role,
-                      memberName: m?.name,
-                      match: !!(refId && refId === uid),
+                      matchByUid: !!matchByUid,
+                      matchByEmail: !!matchByEmail,
                     });
                   } else if (compareCount === 501) {
                     console.log('[dashboard][membership] compare member: too many comparisons, truncating logs after 500');
                   }
                 }
-                if (!refId) continue;
-                if (refId === uid) {
+                if (matchByUid || matchByEmail) {
                   isMember = true;
                   break;
                 }
@@ -166,6 +172,7 @@ export function useDashboard({
 
             if (isMember) {
               const pid = String(d?.projectId || d?.id || '').trim();
+              const pnum = String(d?.projectNumber || '').trim();
               if (DEBUG_MEMBERSHIP) {
                 console.log('[dashboard][membership] member match => allow project', {
                   docId: d?.id,
@@ -175,6 +182,7 @@ export function useDashboard({
                 });
               }
               if (pid) next.add(pid);
+              if (pnum && pnum !== pid) next.add(pnum);
             }
           }
         } catch (_e) {}
@@ -194,7 +202,7 @@ export function useDashboard({
     return () => {
       try { unsub?.(); } catch (_e) {}
     };
-  }, [companyId, routeCompanyId, authClaims?.companyId, currentUserId, DEBUG_MEMBERSHIP, isAdmin]);
+  }, [companyId, routeCompanyId, authClaims?.companyId, currentUserId, currentUserEmail, DEBUG_MEMBERSHIP, isAdmin]);
 
   // Canonical project source for dashboard rendering:
   // Firestore collection foretag/{companyId}/projects (not SharePoint folder hierarchy).
@@ -314,6 +322,11 @@ export function useDashboard({
 
       try { setDashboardDraftItems(Array.isArray(filteredDrafts) ? filteredDrafts : []); } catch (_e) {}
 
+      const isProjectAllowed = (p) => {
+        const pid = resolveProjectId(p);
+        const pnum = String(p?.projectNumber || p?.number || '').trim();
+        return (pid && allowedProjectIds.has(pid)) || (pnum && allowedProjectIds.has(pnum));
+      };
       try {
         const activeList = [];
         const list = companyProjectsRef.current;
@@ -321,7 +334,7 @@ export function useDashboard({
           for (const p of list) {
             const pid = resolveProjectId(p);
             if (!pid) continue;
-            if (!allowedProjectIds.has(pid)) continue;
+            if (!isProjectAllowed(p)) continue;
             if (isProjectCompleted(p)) continue;
             activeList.push({
               ...p,
@@ -360,7 +373,7 @@ export function useDashboard({
             for (const p of list) {
               const pid = resolveProjectId(p);
               if (!pid) continue;
-              if (!allowedProjectIds.has(pid)) continue;
+              if (!isProjectAllowed(p)) continue;
               if (isProjectCompleted(p)) continue;
               n += 1;
             }
@@ -563,7 +576,7 @@ export function useDashboard({
               const ts = ev.ts || ev.createdAt || ev.updatedAt || null;
               const projectId = ev.projectId || (ev.project && ev.project.id) || null;
               const projectName = ev.projectName || (ev.project && ev.project.name) || null;
-              const desc = ev.label || ev.message || ev.msg || '';
+              const desc = ev.label || ev.message || ev.msg || ev.desc || '';
               recent.push({
                 kind: ev.kind || 'company',
                 type: t,
@@ -674,6 +687,70 @@ export function useDashboard({
     };
   }, [companyId, routeCompanyId, authClaims?.companyId]);
 
+  // Tidsplan för projekt användaren är med i (organisation): kommande datum till högerpanelen
+  const timelineByProjectRef = useRef({});
+  useEffect(() => {
+    const cid = String(companyId || routeCompanyId || authClaims?.companyId || '').trim();
+    if (!cid || !memberProjectsReady || memberProjectIds.size === 0) {
+      setDashboardUpcomingTimelineItems([]);
+      return;
+    }
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const pids = Array.from(memberProjectIds).filter((id) => String(id || '').trim()).slice(0, 50);
+
+    function buildMerged() {
+      const list = companyProjectsRef.current || [];
+      const merged = [];
+      for (const pid of Object.keys(timelineByProjectRef.current)) {
+        const customDates = timelineByProjectRef.current[pid] || [];
+        const proj = list.find((p) => String(resolveProjectId(p) || '').trim() === String(pid).trim());
+        const projectName = proj?.fullName || proj?.projectName || proj?.name || proj?.projectNumber || pid;
+        for (const d of customDates) {
+          const date = String(d?.date || '').trim();
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+          if (date < todayISO) continue;
+          merged.push({
+            projectId: pid,
+            projectName,
+            project: proj ? { ...proj, id: pid, fullName: projectName } : { id: pid, fullName: projectName },
+            date,
+            title: String(d?.title || '').trim() || 'Datum',
+            dateMs: new Date(date).getTime(),
+          });
+        }
+      }
+      merged.sort((a, b) => a.dateMs - b.dateMs);
+      setDashboardUpcomingTimelineItems(merged);
+    }
+
+    const unsubs = [];
+    const timelineByProject = timelineByProjectRef.current;
+    for (const pid of pids) {
+      const ref = doc(db, 'foretag', cid, 'project_timeline', pid);
+      const unsub = onSnapshot(
+        ref,
+        (snap) => {
+          const raw = snap.exists() ? snap.data() : null;
+          const customDates = Array.isArray(raw?.customDates) ? raw.customDates : [];
+          const withDate = customDates
+            .map((d) => ({ id: d?.id, title: d?.title, date: String(d?.date || '').trim() }))
+            .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.date));
+          timelineByProjectRef.current[pid] = withDate;
+          buildMerged();
+        },
+        () => {
+          timelineByProjectRef.current[pid] = [];
+          buildMerged();
+        }
+      );
+      unsubs.push(unsub);
+    }
+    return () => {
+      unsubs.forEach((u) => { try { u(); } catch (_e) {} });
+      pids.forEach((pid) => { delete timelineByProject[pid]; });
+    };
+  }, [companyId, routeCompanyId, authClaims?.companyId, memberProjectsReady, memberProjectIds]);
+
   useEffect(() => {
     try {
       setDashboardFocus(null);
@@ -762,6 +839,7 @@ export function useDashboard({
     dashboardControlsToSignItems,
     dashboardOpenDeviationItems,
     dashboardUpcomingSkyddsrondItems,
+    dashboardUpcomingTimelineItems,
     dashboardDropdownAnchor,
     dashboardDropdownTop,
     dashboardDropdownRowKey,

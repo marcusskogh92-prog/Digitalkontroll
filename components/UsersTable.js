@@ -1,8 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Linking, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import ContextMenu from './ContextMenu';
 import { formatPersonName } from './formatPersonName';
+import { MODAL_DESIGN_2026 } from '../constants/modalDesign2026';
+import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../constants/tableLayout';
+
+/** Fast bredd för Status-kolumnen längst till höger (kebab borttagen – endast högerklick/dubbelklick som Leverantörer) */
+const STATUS_COLUMN_WIDTH = 80;
+
+/** Justerbara kolumner (golden rules) – endast på webb */
+const DEFAULT_COLUMN_WIDTHS = { name: 180, email: 220, role: 100 };
+const MIN_COLUMN_WIDTH = 72;
+const RESIZE_HANDLE_WIDTH = 6;
 
 const isMemberDisabled = (member) => {
   if (!member) return false;
@@ -11,19 +21,37 @@ const isMemberDisabled = (member) => {
 
 const getRoleLabel = (member) => {
   const role = String(member?.role || '').trim();
-  if (role === 'superadmin') return 'Superadmin';
-  if (role === 'admin') return 'Företagsadmin';
+  if (role === 'superadmin' || role === 'admin') return 'Admin';
   return 'Användare';
 };
 
 const getRoleBadge = (member) => {
   const role = String(member?.role || '').trim();
-  if (role === 'superadmin') return { label: 'Superadmin', color: '#C62828', bg: '#FFEBEE' };
-  if (role === 'admin') return { label: 'Företagsadmin', color: '#1565C0', bg: '#E3F2FD' };
-  return { label: 'Användare', color: '#455A64', bg: '#ECEFF1' };
+  if (role === 'superadmin' || role === 'admin') return { label: 'Admin', color: '#fff', bg: '#1e293b' };
+  return { label: 'Användare', color: '#334155', bg: '#e2e8f0' };
 };
 
 const normalizeText = (value) => String(value || '').toLowerCase();
+
+const ROLE_FILTERS = [
+  { key: 'all', label: 'Alla' },
+  { key: 'admin', label: 'Admin' },
+  { key: 'user', label: 'Användare' },
+];
+
+const isAdminRole = (member) => {
+  const r = String(member?.role || '').trim();
+  return r === 'admin' || r === 'superadmin';
+};
+
+/** Visar förnamn + efternamn när de finns, annars displayName/email. */
+const getDisplayNameForUser = (u) => {
+  if (!u) return '';
+  const first = String(u.firstName ?? '').trim();
+  const last = String(u.lastName ?? '').trim();
+  if (first || last) return [first, last].filter(Boolean).join(' ').trim();
+  return formatPersonName(u.displayName || u.email || '') || '';
+};
 
 export default function UsersTable({
   companyName,
@@ -40,11 +68,13 @@ export default function UsersTable({
   onDelete,
   canEditUser,
   canDeleteUser,
+  showRoleFilter = false,
 }) {
   const isWeb = Platform.OS === 'web';
   const [sortColumn, setSortColumn] = useState('displayName');
   const [sortDirection, setSortDirection] = useState('asc');
   const [visibleLimit, setVisibleLimit] = useState(500);
+  const [roleFilter, setRoleFilter] = useState('all');
 
   const [hoveredRowKey, setHoveredRowKey] = useState(null);
   const [toggleBusyKey, setToggleBusyKey] = useState(null);
@@ -56,16 +86,60 @@ export default function UsersTable({
   const [lastClickKey, setLastClickKey] = useState(null);
   const [lastClickAt, setLastClickAt] = useState(0);
 
-  const filtered = useMemo(() => {
+  const [columnWidths, setColumnWidths] = useState(DEFAULT_COLUMN_WIDTHS);
+  const resizeRef = useRef({ column: null, startX: 0, startWidth: 0 });
+
+  const w = columnWidths;
+  const col = (key) => ({ width: w[key], minWidth: w[key], flexShrink: 0 });
+  const gapBetweenCols = isWeb ? RESIZE_HANDLE_WIDTH : 0;
+
+  const startResize = useCallback((column, e) => {
+    if (Platform.OS !== 'web') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const clientX = e.clientX ?? e.nativeEvent?.pageX ?? 0;
+    resizeRef.current = { column, startX: clientX, startWidth: columnWidths[column] };
+  }, [columnWidths]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e) => {
+      const { column, startX, startWidth } = resizeRef.current;
+      if (column == null) return;
+      const clientX = e.clientX ?? 0;
+      const delta = clientX - startX;
+      const newWidth = Math.max(MIN_COLUMN_WIDTH, startWidth + delta);
+      setColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
+      resizeRef.current = { ...resizeRef.current, startX: clientX, startWidth: newWidth };
+    };
+    const onUp = () => {
+      resizeRef.current = { column: null, startX: 0, startWidth: 0 };
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  const roleFiltered = useMemo(() => {
     const arr = Array.isArray(users) ? users : [];
+    if (roleFilter === 'all') return arr;
+    if (roleFilter === 'admin') return arr.filter(isAdminRole);
+    return arr.filter((u) => !isAdminRole(u));
+  }, [users, roleFilter]);
+
+  const filtered = useMemo(() => {
+    const arr = roleFiltered;
     const q = normalizeText(search).trim();
     if (!q) return arr;
     return arr.filter((u) => {
-      const name = normalizeText(formatPersonName(u?.displayName || u?.email || ''));
+      const name = normalizeText(getDisplayNameForUser(u));
       const email = normalizeText(u?.email || '');
       return name.includes(q) || email.includes(q);
     });
-  }, [users, search]);
+  }, [roleFiltered, search]);
 
   const sorted = useMemo(() => {
     const arr = Array.isArray(filtered) ? [...filtered] : [];
@@ -76,7 +150,7 @@ export default function UsersTable({
       if (col === 'email') return String(u?.email || '');
       if (col === 'role') return getRoleLabel(u);
       if (col === 'status') return isMemberDisabled(u) ? 'Inaktiv' : 'Aktiv';
-      return String(formatPersonName(u?.displayName || u?.email || '') || '');
+      return String(getDisplayNameForUser(u) || '');
     };
 
     arr.sort((a, b) => {
@@ -105,7 +179,7 @@ export default function UsersTable({
       if (Platform.OS !== 'web') {
         const u = user || null;
         if (!u) return;
-        Alert.alert('Användare', String(u?.displayName || u?.email || 'Användare'), [
+        Alert.alert('Användare', String(getDisplayNameForUser(u) || u?.email || 'Användare'), [
           { text: 'Avbryt', style: 'cancel' },
           { text: 'Redigera', onPress: () => onEdit?.(u), disabled: !canEditUser?.(u) },
           { text: isMemberDisabled(u) ? 'Aktivera' : 'Inaktivera', onPress: () => onToggleDisabled?.(u) },
@@ -155,7 +229,7 @@ export default function UsersTable({
   if (!isWeb) {
     return (
       <View style={{ flex: 1, padding: 16 }}>
-        <Text style={{ fontSize: 18, fontWeight: '700' }}>Användare</Text>
+        <Text style={{ fontSize: 16, fontWeight: '700' }}>Användare</Text>
         <Text style={{ marginTop: 8, color: '#555' }}>Användare är just nu optimerat för webbläget.</Text>
       </View>
     );
@@ -163,21 +237,44 @@ export default function UsersTable({
 
   return (
     <View style={{ borderWidth: 1, borderColor: '#E6E8EC', borderRadius: 16, overflow: 'hidden', backgroundColor: '#fff' }}>
-      <View style={{ padding: 18, backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E6E8EC' }}>
+      <View style={{ padding: 16, backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E6E8EC' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             {companyName ? (
               <>
-                <Text style={{ fontSize: 15, fontWeight: '500', color: '#666' }}>{companyName}</Text>
+                <Text style={{ fontSize: 13, fontWeight: '500', color: '#666' }}>{companyName}</Text>
                 <Ionicons name="chevron-forward" size={14} color="#999" />
               </>
             ) : null}
             <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
               <Ionicons name="people-outline" size={20} color="#1976D2" />
             </View>
-            <Text style={{ fontSize: 15, fontWeight: '700', color: '#111' }}>Användare</Text>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: '#111' }}>Användare</Text>
           </View>
 
+          {showRoleFilter ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#E2E8F0', borderRadius: 10, padding: 2 }}>
+              {ROLE_FILTERS.map((f) => {
+                const active = roleFilter === f.key;
+                return (
+                  <TouchableOpacity
+                    key={f.key}
+                    onPress={() => setRoleFilter(f.key)}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 12,
+                      borderRadius: 8,
+                      backgroundColor: active ? '#334155' : 'transparent',
+                      ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.2s' } : {}),
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: active ? '#fff' : '#475569' }}>{f.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : null}
           <View style={{ flex: 1, maxWidth: 420, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 8 }}>
             <Ionicons name="search" size={16} color="#64748b" style={{ marginRight: 8 }} />
             <TextInput
@@ -189,7 +286,7 @@ export default function UsersTable({
               placeholder="Sök användare (namn eller e-post)"
               style={{
                 flex: 1,
-                fontSize: 13,
+                fontSize: 12,
                 color: '#111',
                 ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
               }}
@@ -203,19 +300,19 @@ export default function UsersTable({
                 <TouchableOpacity
                   onPress={onAdd}
                   style={{
-                    paddingVertical: 9,
-                    paddingHorizontal: 12,
-                    borderRadius: 12,
-                    backgroundColor: '#1976D2',
+                    paddingVertical: 6,
+                    paddingHorizontal: 10,
+                    borderRadius: 10,
+                    backgroundColor: '#1e293b',
                     flexDirection: 'row',
                     alignItems: 'center',
-                    gap: 8,
+                    gap: 6,
                     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.2s' } : {}),
                   }}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="add" size={18} color="#fff" />
-                  <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Lägg till användare</Text>
+                  <Ionicons name="add" size={16} color="#fff" />
+                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 12 }}>Lägg till användare</Text>
                 </TouchableOpacity>
               </>
             ) : null}
@@ -241,10 +338,10 @@ export default function UsersTable({
         </View>
       </View>
 
-      <View style={{ padding: 18 }}>
+      <View style={{ padding: 16 }}>
         {!hasSelectedCompany ? (
           <View style={{ padding: 32, alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E6E8EC' }}>
-            <Text style={{ color: '#475569', fontSize: 15, fontWeight: '600' }}>Välj ett företag i listan till vänster</Text>
+            <Text style={{ color: '#475569', fontSize: 13, fontWeight: '600' }}>Välj ett företag i listan till vänster</Text>
           </View>
         ) : (
           <>
@@ -256,7 +353,7 @@ export default function UsersTable({
             ) : null}
 
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-              <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '500' }}>
+              <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '500' }}>
                 Visar {Math.min(shownUsers.length, filtered.length)} av {filtered.length}
               </Text>
               {filtered.length > shownUsers.length ? (
@@ -265,87 +362,83 @@ export default function UsersTable({
                   style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.2s' } : {}) }}
                   activeOpacity={0.8}
                 >
-                  <Text style={{ color: '#1976D2', fontWeight: '700', fontSize: 13 }}>Visa fler</Text>
+                  <Text style={{ color: '#1976D2', fontWeight: '700', fontSize: 12 }}>Visa fler</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
 
-            <View style={{ backgroundColor: '#F8FAFC', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E6E8EC', marginBottom: 10 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={[styles.tableWrap, { width: '100%' }]}>
+              <View style={[styles.headerRow, isWeb && { gap: gapBetweenCols }]}>
                 <TouchableOpacity
                   onPress={() => handleSort('displayName')}
-                  style={{ flex: 2.0, flexDirection: 'row', alignItems: 'center', gap: 4, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s' } : {}) }}
+                  style={[styles.headerCell, col('name'), Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' }]}
                   activeOpacity={0.7}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Namn</Text>
+                  <Text style={styles.headerText} numberOfLines={1}>Namn</Text>
                   {sortColumn === 'displayName' ? (
                     <Ionicons name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#1976D2" />
                   ) : (
                     <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
                   )}
                 </TouchableOpacity>
-
+                {isWeb && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('name', e)}><View style={styles.resizeHandleLine} /></View>}
                 <TouchableOpacity
                   onPress={() => handleSort('email')}
-                  style={{ flex: 2.0, flexDirection: 'row', alignItems: 'center', gap: 4, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s' } : {}) }}
+                  style={[styles.headerCell, col('email'), Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' }]}
                   activeOpacity={0.7}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>E-post</Text>
+                  <Text style={styles.headerText} numberOfLines={1}>E-post</Text>
                   {sortColumn === 'email' ? (
                     <Ionicons name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#1976D2" />
                   ) : (
                     <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
                   )}
                 </TouchableOpacity>
-
+                {isWeb && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('email', e)}><View style={styles.resizeHandleLine} /></View>}
                 <TouchableOpacity
                   onPress={() => handleSort('role')}
-                  style={{ flex: 1.3, flexDirection: 'row', alignItems: 'center', gap: 4, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s' } : {}) }}
+                  style={[styles.headerCell, col('role'), Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' }]}
                   activeOpacity={0.7}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Behörighet</Text>
+                  <Text style={styles.headerText} numberOfLines={1}>Roll</Text>
                   {sortColumn === 'role' ? (
                     <Ionicons name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#1976D2" />
                   ) : (
                     <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
                   )}
                 </TouchableOpacity>
-
+                {isWeb && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('role', e)}><View style={styles.resizeHandleLine} /></View>}
                 <TouchableOpacity
                   onPress={() => handleSort('status')}
-                  style={{ flex: 1.0, flexDirection: 'row', alignItems: 'center', gap: 4, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s' } : {}) }}
+                  style={[styles.headerCell, styles.statusCell, Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' }]}
                   activeOpacity={0.7}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Status</Text>
+                  <Text style={styles.headerText}>Status</Text>
                   {sortColumn === 'status' ? (
                     <Ionicons name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#1976D2" />
                   ) : (
                     <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
                   )}
                 </TouchableOpacity>
-
-                <View style={{ flex: 0.4, alignItems: 'flex-end' }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Åtgärder</Text>
-                </View>
+                <View style={styles.cellSpacer} />
               </View>
-            </View>
 
             {loading ? (
               <View style={{ padding: 24, alignItems: 'center' }}>
-                <Text style={{ color: '#64748b', fontSize: 14, fontWeight: '500' }}>Laddar användare…</Text>
+                <Text style={{ color: '#64748b', fontSize: 13, fontWeight: '500' }}>Laddar användare…</Text>
               </View>
             ) : filtered.length === 0 ? (
               <View style={{ padding: 32, alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E6E8EC' }}>
                 <View style={{ width: 64, height: 64, borderRadius: 16, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
                   <Ionicons name="people-outline" size={32} color="#1976D2" />
                 </View>
-                <Text style={{ color: '#475569', fontSize: 15, fontWeight: '600', marginBottom: 6 }}>Inga användare ännu</Text>
-                <Text style={{ color: '#94A3B8', fontSize: 13, textAlign: 'center' }}>
+                <Text style={{ color: '#475569', fontSize: 14, fontWeight: '600', marginBottom: 6 }}>Inga användare ännu</Text>
+                <Text style={{ color: '#94A3B8', fontSize: 12, textAlign: 'center' }}>
                   {search ? 'Inga användare matchade din sökning.' : 'Lägg till din första användare för att komma igång.'}
                 </Text>
               </View>
             ) : (
-              <View style={{ borderWidth: 1, borderColor: '#E6E8EC', borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff' }}>
+              <>
                 {shownUsers.map((u, idx) => {
                   const key = getUserKey(u, idx);
                   const disabled = isMemberDisabled(u);
@@ -370,7 +463,6 @@ export default function UsersTable({
                           if (canEditUser?.(u)) onEdit?.(u);
                           return;
                         }
-                        // single-click no-op (keeps table calm)
                         try { e?.stopPropagation?.(); } catch (_e2) {}
                       }}
                       onContextMenu={Platform.OS === 'web' ? (e) => {
@@ -380,54 +472,62 @@ export default function UsersTable({
                       onLongPress={(e) => openRowMenu(e, u)}
                       onMouseEnter={Platform.OS === 'web' ? () => setHoveredRowKey(key) : undefined}
                       onMouseLeave={Platform.OS === 'web' ? () => setHoveredRowKey((prev) => (String(prev) === String(key) ? null : prev)) : undefined}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        paddingVertical: 6,
-                        paddingHorizontal: 12,
-                        borderBottomWidth: idx < shownUsers.length - 1 ? 1 : 0,
-                        borderBottomColor: '#EEF0F3',
-                        backgroundColor: isHovered ? hoverBg : baseBg,
-                        ...(Platform.OS === 'web' ? { cursor: isBusy ? 'wait' : 'pointer', transition: 'background-color 0.15s' } : {}),
-                      }}
+                      style={[
+                        styles.bodyRow,
+                        isWeb && { gap: gapBetweenCols },
+                        { borderBottomWidth: idx < shownUsers.length - 1 ? 1 : 0, backgroundColor: isHovered ? hoverBg : baseBg },
+                        Platform.OS === 'web' && { cursor: isBusy ? 'wait' : 'pointer' },
+                      ]}
                       activeOpacity={0.7}
                     >
-                      <Text style={{ flex: 2.0, fontSize: 13, color: '#111', fontWeight: '500' }} numberOfLines={1}>
-                        {formatPersonName(u?.displayName || u?.email || '') || '—'}
-                      </Text>
-                      <Text style={{ flex: 2.0, fontSize: 13, color: '#64748b' }} numberOfLines={1}>
-                        {String(u?.email || '—')}
-                      </Text>
-                      <View style={{ flex: 1.3, flexDirection: 'row', alignItems: 'center' }}>
-                        <View style={{ alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 9, borderRadius: 999, backgroundColor: roleBadge.bg }}>
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: roleBadge.color }}>{roleBadge.label}</Text>
+                      <View style={[styles.cellContent, col('name')]}>
+                        <Text style={styles.cellText} numberOfLines={1}>
+                          {getDisplayNameForUser(u) || '—'}
+                        </Text>
+                      </View>
+                      {isWeb && <View style={styles.resizeHandle} />}
+                      <View style={[styles.cellContent, col('email')]}>
+                        {u?.email ? (
+                          <TouchableOpacity
+                            onPress={() => Linking.openURL(`mailto:${String(u.email).trim()}`)}
+                            style={Platform.OS === 'web' ? { cursor: 'pointer' } : {}}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.cellLink} numberOfLines={1}>
+                              {String(u.email)}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <Text style={styles.cellMuted}>—</Text>
+                        )}
+                      </View>
+                      {isWeb && <View style={styles.resizeHandle} />}
+                      <View style={[styles.cellContent, col('role'), { flexDirection: 'row', alignItems: 'center' }]}>
+                        <View style={{ alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 6, borderRadius: 999, backgroundColor: roleBadge.bg }}>
+                          <Text style={{ fontSize: 12, fontWeight: '500', color: roleBadge.color }}>{roleBadge.label}</Text>
                         </View>
                       </View>
-                      <View style={{ flex: 1.0, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <View style={{ alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 9, borderRadius: 999, backgroundColor: disabled ? '#FFEBEE' : '#E8F5E9' }}>
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: disabled ? '#C62828' : '#2E7D32' }}>{disabled ? 'Inaktiv' : 'Aktiv'}</Text>
-                        </View>
-                        {isBusy ? (
-                          <View style={{ width: 16, height: 16, alignItems: 'center', justifyContent: 'center' }}>
-                            <ActivityIndicator size="small" color="#1976D2" />
+                      {isWeb && <View style={styles.resizeHandle} />}
+                      <View style={[styles.cellContent, styles.statusCell, isWeb && { backgroundColor: isHovered ? hoverBg : baseBg }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                          <View style={{ alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 6, borderRadius: 999, backgroundColor: disabled ? '#FEF2F2' : '#F1F5F9' }}>
+                            <Text style={{ fontSize: 12, fontWeight: '500', color: disabled ? '#B91C1C' : '#64748b' }}>{disabled ? 'Inaktiv' : 'Aktiv'}</Text>
                           </View>
-                        ) : null}
+                          {isBusy ? (
+                            <View style={{ width: 14, height: 14, alignItems: 'center', justifyContent: 'center' }}>
+                              <ActivityIndicator size="small" color="#1976D2" />
+                            </View>
+                          ) : null}
+                        </View>
                       </View>
-                      <View style={{ flex: 0.4, alignItems: 'flex-end' }}>
-                        <TouchableOpacity
-                          onPress={(e) => openRowMenu(e, u)}
-                          disabled={!!isBusy}
-                          style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', ...(Platform.OS === 'web' ? { cursor: isBusy ? 'wait' : 'pointer' } : {}) }}
-                          activeOpacity={0.8}
-                        >
-                          <Ionicons name="ellipsis-vertical" size={16} color="#475569" />
-                        </TouchableOpacity>
-                      </View>
+                      <View style={styles.cellSpacer} />
                     </TouchableOpacity>
                   );
                 })}
-              </View>
+              </>
             )}
+            </View>
+
           </>
         )}
 
@@ -454,3 +554,91 @@ export default function UsersTable({
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  tableWrap: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: MODAL_DESIGN_2026.tableRadius,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+    paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
+    backgroundColor: '#f1f5f9',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  headerCell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flexShrink: 0,
+    minWidth: 0,
+    paddingLeft: COLUMN_PADDING_LEFT,
+    paddingRight: COLUMN_PADDING_RIGHT,
+  },
+  headerText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#475569',
+  },
+  statusCell: {
+    width: STATUS_COLUMN_WIDTH,
+    minWidth: STATUS_COLUMN_WIDTH,
+    flexShrink: 0,
+    justifyContent: 'flex-end',
+    ...(Platform.OS === 'web' ? { position: 'sticky', right: 0, zIndex: 2, backgroundColor: '#f1f5f9' } : {}),
+  },
+  cellSpacer: {
+    flex: 1,
+    minWidth: 0,
+  },
+  bodyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: MODAL_DESIGN_2026.tableRowHeight,
+    paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+    paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
+    borderBottomColor: '#eef0f3',
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s' } : {}),
+  },
+  cellContent: {
+    paddingLeft: COLUMN_PADDING_LEFT,
+    paddingRight: COLUMN_PADDING_RIGHT,
+    minWidth: 0,
+  },
+  cellText: {
+    fontSize: 13,
+    color: '#111',
+  },
+  cellLink: {
+    fontSize: 13,
+    color: '#1976D2',
+    textDecorationLine: 'underline',
+  },
+  cellMuted: {
+    fontSize: 13,
+    color: '#64748b',
+  },
+  resizeHandle: {
+    width: RESIZE_HANDLE_WIDTH,
+    alignSelf: 'stretch',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'col-resize' } : {}),
+  },
+  resizeHandleLine: {
+    position: 'absolute',
+    left: Math.floor(RESIZE_HANDLE_WIDTH / 2) - 1,
+    top: 4,
+    bottom: 4,
+    width: 2,
+    backgroundColor: '#cbd5e1',
+    borderRadius: 1,
+  },
+});

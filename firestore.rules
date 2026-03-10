@@ -8,7 +8,7 @@ service cloud.firestore {
     function isCompanyMember(company) {
       return isSignedIn()
         && (
-          request.auth.token.companyId == company
+          request.auth.token.get('companyId', '') == company
           || (
             exists(/databases/$(database)/documents/users/$(request.auth.uid))
             && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == company
@@ -30,19 +30,18 @@ service cloud.firestore {
         );
     }
 
+    // Använd .get() så att saknade token-claims inte får regeln att kasta (t.ex. email saknas vid vissa providers)
     function isGlobalAdmin() {
       return request.auth != null
         && (
-          // Token-baserade superadmins
-          request.auth.token.globalAdmin == true ||
-          request.auth.token.superadmin == true ||
-          request.auth.token.role == 'superadmin' ||
-          // Admin i MS Byggsystem
-          (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin')) ||
-          // Whitelist specifika superadmin-mail för robusthet
-          request.auth.token.email == 'marcus@msbyggsystem.se' ||
-          request.auth.token.email == 'marcus.skogh@msbyggsystem.se' ||
-          request.auth.token.email == 'marcus.skogh@msbyggsystem'
+          request.auth.token.get('globalAdmin', false) == true
+          || request.auth.token.get('superadmin', false) == true
+          || request.auth.token.get('role', '') == 'superadmin'
+          || (request.auth.token.get('companyId', '') == 'MS Byggsystem' && (request.auth.token.get('admin', false) == true || request.auth.token.get('role', '') == 'admin'))
+          || request.auth.token.get('email', '') == 'marcus@msbyggsystem.se'
+          || request.auth.token.get('email', '') == 'Marcus@msbyggsystem.se'
+          || request.auth.token.get('email', '') == 'marcus.skogh@msbyggsystem.se'
+          || request.auth.token.get('email', '') == 'marcus.skogh@msbyggsystem'
         );
     }
 
@@ -125,6 +124,14 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company);
     }
 
+    // Byggdelar grundregister (company-scoped). Default-byggdelar får inte raderas (kontroll i app).
+    // Globala admins kan hantera alla företags byggdelar.
+    match /foretag/{company}/byggdelar/{byggdelId} {
+      allow read: if isSignedIn() && (isCompanyMember(company) || isGlobalAdmin());
+      allow create, update: if isSignedIn() && (hasWriteAccess(company) || isGlobalAdmin());
+      allow delete: if isSignedIn() && (hasWriteAccess(company) || isGlobalAdmin());
+    }
+
     // Byggdel hierarki (company-scoped)
     match /foretag/{company}/byggdel_hierarki/state {
       allow read, write: if isCompanyMember(company);
@@ -189,6 +196,19 @@ service cloud.firestore {
     match /foretag/{company}/kunder/{customerId} {
       allow read: if isSignedIn() && isCompanyMember(company);
       allow create, update, delete: if isSignedIn() && hasWriteAccess(company);
+    }
+
+    // Företagsentiteter (kund/leverantör samlat) – en entitet kan vara både kund och leverantör.
+    // Kontakter kopplas till companyDocId; synk till kund-/leverantörsvy sker via denna referens.
+    match /foretag/{company}/companies/{companyDocId} {
+      allow read: if isSignedIn() && isCompanyMember(company);
+      allow create, update, delete: if isSignedIn() && hasWriteAccess(company);
+    }
+
+    // Kontoplan (chart of accounts, company-scoped). Globala admins kan hantera alla företag.
+    match /foretag/{company}/kontoplan/{accountId} {
+      allow read: if isSignedIn() && (isCompanyMember(company) || isGlobalAdmin());
+      allow create, update, delete: if isSignedIn() && (hasWriteAccess(company) || isGlobalAdmin());
     }
 
     // Company members directory (company-scoped)
@@ -263,12 +283,24 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company);
     }
 
+    // Section structure overrides (per-project customizable folders in lower topbar)
+    // Path: foretag/{company}/projects/{projectId}/sectionStructure/{sectionId}
+    match /foretag/{company}/projects/{projectId}/sectionStructure/{sectionId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
     // Project members (optional per-project access; used by file_comments).
     // Collection: foretag/{company}/projects/{projectId}/members/{userId}
     // When present, file_comments allow read/write for these users; otherwise company members only.
     match /foretag/{company}/projects/{projectId}/members/{userId} {
       allow read: if request.auth != null && isCompanyMember(company);
       allow write: if request.auth != null && isCompanyMember(company);
+    }
+
+    // Checklist items (stage-based project checklist, e.g. Anbudsprocess)
+    // Samma åtkomst som filkommentarer: företagsmedlem ELLER projektmedlem ELLER global admin
+    match /foretag/{company}/projects/{projectId}/checklist_items/{itemId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin() || canAccessFileComments(company, projectId);
     }
 
     // File comments (company-scoped, project-specific)
@@ -302,6 +334,12 @@ service cloud.firestore {
         && resource.data.userId == request.auth.uid;
     }
 
+    // Collection group for sharepoint_sites: superadmin behöver lista alla företags siter i SharePoint Nav.
+    // Skriv sker fortfarande bara via path-regeln foretag/{company}/sharepoint_sites.
+    match /{path=**}/sharepoint_sites/{siteId} {
+      allow get, list: if isGlobalAdmin();
+    }
+
     // Project organisation (company-scoped, project-specific)
     // Used by "Organisation och roller" (Översikt) for custom groups and members.
     // Collection: foretag/{company}/project_organisation/{projectId}
@@ -321,6 +359,20 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company);
     }
 
+    // Inköpsplan (company + project scoped)
+    // Path: foretag/{company}/projects/{projectId}/inkopsplan/inkopsplan
+    // Subcollection: foretag/{company}/projects/{projectId}/inkopsplan/inkopsplan/rows/{rowId}
+    match /foretag/{company}/projects/{projectId}/inkopsplan/{document=**} {
+      // Same access model as file comments/checklist: company member OR explicit project member.
+      allow read, write: if canAccessFileComments(company, projectId) || isGlobalAdmin();
+    }
+
+    // Inköpsplan mailmallar (company + project scoped)
+    // Path: foretag/{company}/projects/{projectId}/inkopsplanEmailTemplates/{templateId}
+    match /foretag/{company}/projects/{projectId}/inkopsplanEmailTemplates/{templateId} {
+      allow read, write: if canAccessFileComments(company, projectId) || isGlobalAdmin();
+    }
+
     // FFU AI analysis (persisted per project)
     // Path: foretag/{company}/projects/{projectId}/ai_ffu_analysis/latest
     // - Read: all company members + global admins
@@ -337,6 +389,31 @@ service cloud.firestore {
       allow create, update, delete: if hasWriteAccess(company) || isGlobalAdmin();
     }
 
+    // Kalkyl AI analysis (canonical path)
+    // Path: companies/{companyId}/projects/{projectId}/ai_kalkyl_analysis/latest
+    match /companies/{company}/projects/{projectId}/ai_kalkyl_analysis/{docId} {
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+      allow create, update, delete: if hasWriteAccess(company) || isGlobalAdmin();
+    }
+
+    // Company AI prompts (Förfrågningsunderlag, Ritningar, etc.) – företagsbaserade instruktioner för AI-analys
+    match /companies/{company}/ai_prompts/{promptId} {
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+      allow create, update, delete: if hasWriteAccess(company) || isGlobalAdmin();
+    }
+
+    // Company AI prompt templates – flera prompter per kategori (multi-prompt manager)
+    match /companies/{company}/ai_prompt_templates/{templateId} {
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+      allow create, update, delete: if hasWriteAccess(company) || isGlobalAdmin();
+    }
+
+    // Company categories (Kategoriregister) – företagsbaserade kategorier (t.ex. Golv, Mark, Måleri)
+    match /companies/{company}/categories/{categoryId} {
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+      allow create, update, delete: if hasWriteAccess(company) || isGlobalAdmin();
+    }
+
     // External inquiries build parts (legacy/new path)
     match /projects/{projectId}/inquiries/{inquiryId}/buildParts/{buildPartId} {
       allow read, write: if request.auth != null;
@@ -345,13 +422,38 @@ service cloud.firestore {
     // Projects (company-scoped)
     // Firestore is the source of truth for which projects exist and how they map to SharePoint.
     // Collection: foretag/{company}/projects/{projectId}
+    // Update: allow when project number fields are unchanged (e.g. kund/organisationsnummer) for any allowed user;
+    // when project number is changed, require index check (company member or global admin only).
+    function projectNumberFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['projectNumber', 'number', 'projectNumberNormalized', 'projectNumberIndexId']);
+    }
     match /foretag/{company}/projects/{projectId} {
       allow read: if isCompanyMember(company) || isGlobalAdmin();
       // If a write introduces/changes projectNumberIndexId, it must also create/update
       // the matching index doc in the same request (transaction/batch).
       allow create: if (isCompanyMember(company) || isGlobalAdmin())
         && hasValidProjectNumberIndex(company, projectId);
-      allow update: if (isCompanyMember(company) || isGlobalAdmin())
+      // Skapa projekt-dokument utan projektnummer-index (t.ex. bara kund) när det inte finns än
+      allow create: if (isCompanyMember(company) || isGlobalAdmin() || canAccessFileComments(company, projectId))
+        && (!('projectNumberIndexId' in request.resource.data) || request.resource.data.projectNumberIndexId == null || request.resource.data.projectNumberIndexId == '');
+      // Explicit allow för superadmin (säkra .get() så att saknade claims inte får regeln att kasta)
+      allow update: if request.auth != null
+        && (
+          request.auth.token.get('superadmin', false) == true
+          || request.auth.token.get('globalAdmin', false) == true
+          || request.auth.token.get('role', '') == 'superadmin'
+          || request.auth.token.get('email', '') == 'marcus@msbyggsystem.se'
+          || request.auth.token.get('email', '') == 'Marcus@msbyggsystem.se'
+          || request.auth.token.get('email', '') == 'marcus.skogh@msbyggsystem.se'
+          || request.auth.token.get('email', '') == 'marcus.skogh@msbyggsystem'
+        );
+      // Global admins may always update (app uses transaction for project number changes).
+      allow update: if isGlobalAdmin();
+      // Allow update when only non–project-number fields change (e.g. Kund & Beställare)
+      allow update: if (isCompanyMember(company) || canAccessFileComments(company, projectId))
+        && projectNumberFieldsUnchanged();
+      // Allow update when project number is changed and index is valid (company member / global admin)
+      allow update: if isCompanyMember(company)
         && (projectNumberIndexUnchanged() || hasValidProjectNumberIndex(company, projectId));
       allow delete: if isCompanyMember(company) || isGlobalAdmin();
     }
@@ -413,6 +515,29 @@ service cloud.firestore {
     // Collection: foretag/{company}/sharepoint_project_metadata/{docId}
     match /foretag/{company}/sharepoint_project_metadata/{docId} {
       allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // Project presence: vilka användare som har ett projekt öppet (för varning vid radering).
+    // Path: foretag/{company}/projectPresence/{projectId}/users/{userId}
+    // Läs: företagsmedlemmar (för att se om andra har projektet öppet).
+    // Skriv: endast sin egen userId (set on open, delete on leave).
+    match /foretag/{company}/projectPresence/{projectId}/users/{userId} {
+      allow read: if isCompanyMember(company);
+      allow create, update, delete: if isCompanyMember(company) && request.auth.uid == userId;
+    }
+
+    // Planering: delad planeringsdata per företag och flik (live-uppdateringar).
+    // Path: foretag/{company}/planering_plans/{tabId} (jämnt antal segment krävs)
+    match /foretag/{company}/planering_plans/{tabId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Planering presence: vilka som är inne i planeringen på en flik (ikoner i UI).
+    // Path: foretag/{company}/planering_presence/{tabId}/users/{userId} (udda segment för collection)
+    match /foretag/{company}/planering_presence/{tabId}/users/{userId} {
+      allow read: if isCompanyMember(company);
+      allow create, update: if isCompanyMember(company) && request.auth.uid == userId;
+      allow delete: if request.auth != null && request.auth.uid == userId;
     }
   }
 }

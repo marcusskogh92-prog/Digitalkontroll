@@ -1,0 +1,974 @@
+/**
+ * Admin modal: Kontoplan. Opens from Register → Kontoplan.
+ * Samma UX som Kunder/Byggdelstabell: fast header, toolbar, scroll endast i listan.
+ * Data: foretag/{companyId}/kontoplan (konto, benamning, beskrivning).
+ */
+
+import { Ionicons } from '@expo/vector-icons';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+    Alert,
+    Animated,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from 'react-native';
+import { MODAL_DESIGN_2026 as D } from '../../constants/modalDesign2026';
+import { ICON_RAIL } from '../../constants/iconRailTheme';
+import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
+import {
+    buildAndDownloadExcel,
+    computeSyncPlan,
+    KONTOPLAN_EXCEL,
+    parseExcelFromBuffer,
+    validateHeaders,
+} from '../../utils/registerExcel';
+import ContextMenu from '../ContextMenu';
+import {
+    createKontoplanAccount,
+    deleteKontoplanAccount,
+    fetchKontoplan,
+    updateCompanySupplier,
+    updateKontoplanAccount,
+} from '../firebase';
+import ModalBase from './ModalBase';
+import KontoplanTable from './KontoplanTable';
+import AddKontoplanModal from './Modals/AddKontoplanModal';
+import ConfirmModal from './Modals/ConfirmModal';
+
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  box: {
+    width: Platform.OS === 'web' ? '90vw' : '90%',
+    maxWidth: 720,
+    height: Platform.OS === 'web' ? '85vh' : '85%',
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 16,
+    flexDirection: 'column',
+  },
+  header: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: ICON_RAIL.bg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
+  titleIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    backgroundColor: ICON_RAIL.activeBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: { fontSize: 14, fontWeight: '600', color: ICON_RAIL.iconColorActive },
+  titleLine: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, gap: 6, flexWrap: 'nowrap' },
+  titleDot: { fontSize: 11, color: ICON_RAIL.iconColor, marginHorizontal: 5, opacity: 0.8 },
+  subtitle: { fontSize: 12, color: ICON_RAIL.iconColor, fontWeight: '400', opacity: 0.95, flexShrink: 1, minWidth: 0 },
+  closeBtn: {
+    padding: 5,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    backgroundColor: ICON_RAIL.activeBg,
+  },
+  statusOverlay: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    top: 100,
+    zIndex: 100,
+    alignItems: 'center',
+    pointerEvents: 'none',
+  },
+  statusBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  statusBoxSuccess: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
+  statusBoxError: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+  toolbarSection: {
+    flexShrink: 0,
+    paddingHorizontal: D.contentPadding,
+    paddingTop: D.sectionGap,
+    paddingBottom: 12,
+    backgroundColor: '#fff',
+  },
+  toolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  toolbarDivider: {
+    height: 1,
+    backgroundColor: '#eee',
+    marginTop: 12,
+    marginHorizontal: -D.contentPadding,
+  },
+  tableScroll: { flex: 1, minHeight: 0, overflow: 'hidden' },
+  tableScrollContent: { paddingHorizontal: D.contentPadding, paddingTop: D.sectionGap, paddingBottom: D.contentPadding },
+  tableScrollHorizontal: { flex: 1, minHeight: 0, alignSelf: 'stretch' },
+  tableWrap: {},
+  searchWrap: {
+    flex: 1,
+    maxWidth: 400,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  searchInput: { flex: 1, fontSize: 13, color: '#111', padding: 0, marginLeft: 8 },
+  iconBtn: {
+    minWidth: 28,
+    height: 28,
+    paddingHorizontal: 8,
+    borderRadius: D.buttonRadius,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconBtnPrimary: { backgroundColor: D.buttonPrimaryBg, borderColor: D.buttonPrimaryBg },
+  excelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    borderRadius: D.buttonRadius,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+  },
+  emptyState: {
+    padding: 32,
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  emptyTitle: { fontSize: 15, fontWeight: '500', color: '#475569', marginBottom: 6 },
+  selectCompany: { padding: 32, alignItems: 'center' },
+  selectCompanyText: { fontSize: 15, fontWeight: '500', color: '#475569' },
+  footer: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+  },
+  footerBtn: {
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
+    borderRadius: D.buttonRadius,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#fff',
+  },
+  mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
+  footerBtnPrimary: {
+    borderColor: ICON_RAIL.bg,
+    backgroundColor: ICON_RAIL.bg,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: `background-color ${ICON_RAIL.hoverTransitionMs}ms ease, opacity ${ICON_RAIL.hoverTransitionMs}ms ease` } : {}),
+  },
+  footerBtnDark: {
+    borderColor: ICON_RAIL.bg,
+    backgroundColor: ICON_RAIL.bg,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+});
+
+export default function AdminKontoplanModal({ visible, companyId, selectionContext, onClose, onSelectionSaved }) {
+  const cid = String(companyId || '').trim();
+  const hasCompany = Boolean(cid);
+  const isFormMode = selectionContext?.forForm === true;
+  const isSelectionMode = isFormMode || Boolean(selectionContext?.entityId);
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [accounts, setAccounts] = useState([]);
+  const [search, setSearch] = useState('');
+  const [sortColumn, setSortColumn] = useState('konto');
+  const [sortDirection, setSortDirection] = useState('asc');
+  const [editingId, setEditingId] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [inlineKonto, setInlineKonto] = useState('');
+  const [inlineBenamning, setInlineBenamning] = useState('');
+  const [inlineBeskrivning, setInlineBeskrivning] = useState('');
+  const [inlineSaving, setInlineSaving] = useState(false);
+  const [showInlineAddRow, setShowInlineAddRow] = useState(false);
+  const [addKontoplanModalVisible, setAddKontoplanModalVisible] = useState(false);
+  const [addKontoplanSaving, setAddKontoplanSaving] = useState(false);
+  const [rowMenuVisible, setRowMenuVisible] = useState(false);
+  const [rowMenuPos, setRowMenuPos] = useState({ x: 20, y: 64 });
+  const [rowMenuItem, setRowMenuItem] = useState(null);
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [excelMenuVisible, setExcelMenuVisible] = useState(false);
+  const [excelMenuPos, setExcelMenuPos] = useState({ x: 20, y: 64 });
+  const excelBtnRef = useRef(null);
+  const excelInputRef = useRef(null);
+  const [importPlan, setImportPlan] = useState(null);
+  const [importConfirmVisible, setImportConfirmVisible] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const [filterOnlySelected, setFilterOnlySelected] = useState(false);
+  const [localSelectedKonton, setLocalSelectedKonton] = useState([]);
+  const [savingSelection, setSavingSelection] = useState(false);
+
+  const statusOpacity = useRef(new Animated.Value(0)).current;
+  const statusTimeoutRef = useRef(null);
+  const tableScrollRef = useRef(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      // Vid tomt companyId använder fetchKontoplan resolveCompanyId som fallback till token (inloggat företag)
+      const list = await fetchKontoplan(cid || null);
+      setAccounts(Array.isArray(list) ? list : []);
+    } catch (e) {
+      setError(e?.message || 'Kunde inte ladda kontoplan.');
+    } finally {
+      setLoading(false);
+    }
+  }, [cid]);
+
+  const showContent = hasCompany || accounts.length > 0;
+
+  useEffect(() => {
+    if (!visible) return;
+    load();
+  }, [visible, load]);
+
+  /* eslint-disable react-hooks/exhaustive-deps */
+  useEffect(() => {
+    if (visible && selectionContext?.selectedKonton) {
+      setLocalSelectedKonton(Array.isArray(selectionContext.selectedKonton) ? [...selectionContext.selectedKonton] : []);
+      setFilterOnlySelected(false);
+    }
+  }, [visible, selectionContext?.entityId, selectionContext?.forForm, selectionContext?.selectedKonton]);
+  /* eslint-enable react-hooks/exhaustive-deps */
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    if (visible) {
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => { document.body.style.overflow = prev; };
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'web') return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (addKontoplanModalVisible) {
+          setAddKontoplanModalVisible(false);
+        } else {
+          onClose?.();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [visible, onClose, addKontoplanModalVisible]);
+
+  useLayoutEffect(() => {
+    if (!notice && !error) return;
+    statusOpacity.setValue(1);
+  }, [notice, error, statusOpacity]);
+
+  useEffect(() => {
+    if (!notice && !error) return;
+    if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
+    const delay = notice ? 3000 : 4000;
+    statusTimeoutRef.current = setTimeout(() => {
+      Animated.timing(statusOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+        setNotice('');
+        setError('');
+      });
+      statusTimeoutRef.current = null;
+    }, delay);
+    return () => { if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current); };
+  }, [notice, error, statusOpacity]);
+
+  const showNotice = (msg) => {
+    setError('');
+    setNotice(msg);
+  };
+
+  const formatWriteError = (e) => {
+    if (e?.code === 'permission-denied') return 'Saknar behörighet.';
+    return e?.message || 'Kunde inte spara.';
+  };
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return accounts;
+    const s = search.toLowerCase().trim();
+    return accounts.filter((a) => {
+      const k = String(a.konto ?? '').toLowerCase();
+      const b = String(a.benamning ?? '').toLowerCase();
+      const d = String(a.beskrivning ?? '').toLowerCase();
+      return k.includes(s) || b.includes(s) || d.includes(s);
+    });
+  }, [accounts, search]);
+
+  const sorted = useMemo(() => {
+    const list = [...filtered];
+    list.sort((a, b) => {
+      let aVal = '';
+      let bVal = '';
+      if (sortColumn === 'konto') {
+        aVal = String(a.konto ?? '').trim();
+        bVal = String(b.konto ?? '').trim();
+      } else if (sortColumn === 'benamning') {
+        aVal = String(a.benamning ?? '').trim();
+        bVal = String(b.benamning ?? '').trim();
+      } else if (sortColumn === 'beskrivning') {
+        aVal = String(a.beskrivning ?? '').trim();
+        bVal = String(b.beskrivning ?? '').trim();
+      }
+      const cmp = (aVal || '').localeCompare(bVal || '', 'sv');
+      return sortDirection === 'asc' ? cmp : -cmp;
+    });
+    return list;
+  }, [filtered, sortColumn, sortDirection]);
+
+  const sortedForDisplay = useMemo(() => {
+    if (!isSelectionMode || !filterOnlySelected || localSelectedKonton.length === 0) return sorted;
+    const set = new Set(localSelectedKonton);
+    return sorted.filter((item) => set.has(String(item.konto ?? item.id ?? '').trim()));
+  }, [sorted, isSelectionMode, filterOnlySelected, localSelectedKonton]);
+
+  const handleSaveSelection = async () => {
+    if (!cid) return;
+    if (isFormMode) {
+      onSelectionSaved?.({ forFormKonton: true, selectedKonton: localSelectedKonton });
+      onClose();
+      return;
+    }
+    if (!selectionContext?.entityId) return;
+    setSavingSelection(true);
+    setError('');
+    try {
+      await updateCompanySupplier(
+        { id: selectionContext.entityId, patch: { konton: localSelectedKonton } },
+        cid
+      );
+      showNotice('Val sparade för leverantör');
+      onSelectionSaved?.(selectionContext.entityId);
+      onClose();
+    } catch (e) {
+      setError(formatWriteError(e));
+    } finally {
+      setSavingSelection(false);
+    }
+  };
+
+  const handleSort = (col) => {
+    if (sortColumn === col) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(col);
+      setSortDirection('asc');
+    }
+  };
+
+  const normalizeKonto = (v) => String(v ?? '').replace(/\D/g, '').trim();
+
+  const handleInlineSave = async () => {
+    if (!cid) return;
+    const konto = normalizeKonto(inlineKonto);
+    if (!konto) return;
+    const exists = (accounts || []).some((a) => String(a.konto ?? '').trim() === konto);
+    if (exists) {
+      setError('Kontonumret finns redan. Varje konto ska vara unikt.');
+      return;
+    }
+    setInlineSaving(true);
+    setError('');
+    try {
+      await createKontoplanAccount(
+        {
+          konto,
+          benamning: String(inlineBenamning ?? '').trim(),
+          beskrivning: String(inlineBeskrivning ?? '').trim(),
+        },
+        cid
+      );
+      setInlineKonto('');
+      setInlineBenamning('');
+      setInlineBeskrivning('');
+      await load();
+      showNotice('Konto tillagt');
+    } catch (e) {
+      setError(formatWriteError(e));
+    } finally {
+      setInlineSaving(false);
+    }
+  };
+
+  const handleAddKontoplanSave = async (payload) => {
+    if (!cid) return;
+    const konto = normalizeKonto(payload.konto);
+    const exists = (accounts || []).some((a) => String(a.konto ?? '').trim() === konto);
+    if (exists) {
+      throw new Error('Kontonumret finns redan. Varje konto ska vara unikt.');
+    }
+    setAddKontoplanSaving(true);
+    try {
+      await createKontoplanAccount(
+        {
+          konto,
+          benamning: String(payload.benamning ?? '').trim(),
+          beskrivning: String(payload.beskrivning ?? '').trim(),
+        },
+        cid
+      );
+      await load();
+      showNotice('Konto tillagt');
+      setAddKontoplanModalVisible(false);
+    } finally {
+      setAddKontoplanSaving(false);
+    }
+  };
+
+  const handleSaveEdit = async (accountId, values) => {
+    if (!cid) return;
+    const newKonto = normalizeKonto(values.konto);
+    if (newKonto) {
+      const exists = (accounts || []).some(
+        (a) => a.id !== accountId && String(a.konto ?? '').trim() === newKonto
+      );
+      if (exists) {
+        setError('Kontonumret finns redan. Varje konto ska vara unikt.');
+        return;
+      }
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await updateKontoplanAccount(cid, accountId, {
+        konto: newKonto || String(values.konto ?? '').trim(),
+        benamning: values.benamning ?? '',
+        beskrivning: values.beskrivning ?? '',
+      });
+      showNotice('Konto uppdaterat');
+      setEditingId(null);
+      await load();
+    } catch (e) {
+      setError(formatWriteError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const requestDelete = (item) => {
+    setDeleteConfirmItem(item);
+  };
+
+  const confirmDelete = async () => {
+    const item = deleteConfirmItem;
+    if (!cid || !item) return;
+    setDeleting(true);
+    try {
+      await deleteKontoplanAccount(cid, item.id);
+      showNotice('Konto raderat');
+      if (editingId === item.id) setEditingId(null);
+      setDeleteConfirmItem(null);
+      await load();
+    } catch (e) {
+      setError(e?.message || 'Kunde inte radera.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const exportExcel = () => {
+    setExcelMenuVisible(false);
+    if (Platform.OS !== 'web') {
+      Alert.alert('Info', 'Excel-export är endast tillgängligt i webbversionen.');
+      return;
+    }
+    const rows = (accounts || []).map((a) => KONTOPLAN_EXCEL.itemToRow(a));
+    buildAndDownloadExcel(
+      KONTOPLAN_EXCEL.sheetName,
+      KONTOPLAN_EXCEL.headers,
+      rows,
+      KONTOPLAN_EXCEL.filenamePrefix
+    );
+    showNotice('Excel-mall nedladdad');
+  };
+
+  const handleExcelFileChange = (e) => {
+    const file = e?.target?.files?.[0];
+    if (!file || !cid) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const ab = ev?.target?.result;
+      if (!ab) return;
+      const { headers, rows, errors } = parseExcelFromBuffer(ab);
+      if (errors.length > 0) {
+        setError(errors[0]);
+        return;
+      }
+      const { valid, missing } = validateHeaders(headers, KONTOPLAN_EXCEL.headers);
+      if (!valid) {
+        setError(`Ogiltiga kolumnrubriker. Saknas: ${(missing || []).join(', ')}. Använd Excel-mallen.`);
+        return;
+      }
+      const plan = computeSyncPlan(rows, accounts, {
+        keyField: KONTOPLAN_EXCEL.keyField,
+        getKeyFromRow: (row) => row[KONTOPLAN_EXCEL.keyField] ?? '',
+        getKeyFromItem: (item) => KONTOPLAN_EXCEL.itemToKey(item),
+      });
+      setImportPlan(plan);
+      setImportConfirmVisible(true);
+    };
+    reader.readAsArrayBuffer(file);
+    if (excelInputRef.current) excelInputRef.current.value = '';
+  };
+
+  const runImport = async () => {
+    if (!cid || !importPlan) return;
+    setImportBusy(true);
+    setError('');
+    const failed = [];
+    try {
+      for (const row of importPlan.toCreate) {
+        const payload = KONTOPLAN_EXCEL.rowToPayload(row);
+        if (!payload.konto) continue;
+        try {
+          await createKontoplanAccount(payload, cid);
+        } catch (e) {
+          failed.push(`Skapa ${payload.konto}: ${e?.message || 'fel'}`);
+        }
+      }
+      for (const { id, row } of importPlan.toUpdate) {
+        const payload = KONTOPLAN_EXCEL.rowToPayload(row);
+        try {
+          await updateKontoplanAccount(cid, id, payload);
+        } catch (e) {
+          failed.push(`Uppdatera ${payload.konto}: ${e?.message || 'fel'}`);
+        }
+      }
+      for (const item of importPlan.toDelete) {
+        try {
+          await deleteKontoplanAccount(cid, item.id);
+        } catch (e) {
+          failed.push(`Radera ${item.konto}: ${e?.message || 'fel'}`);
+        }
+      }
+      setImportConfirmVisible(false);
+      setImportPlan(null);
+      await load();
+      if (editingId) setEditingId(null);
+      if (failed.length > 0) {
+        setError(`Import klar. ${failed.length} rad(er) misslyckades: ${failed.slice(0, 3).join('; ')}${failed.length > 3 ? '…' : ''}`);
+      } else {
+        showNotice('Import genomförd');
+      }
+    } catch (e) {
+      setError(e?.message || 'Import misslyckades.');
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
+  const openRowMenu = (e, item) => {
+    if (Platform.OS !== 'web') {
+      Alert.alert('Konto', `${item.konto ?? ''} ${item.benamning ?? ''}`.trim(), [
+        { text: 'Avbryt', style: 'cancel' },
+        { text: 'Redigera', onPress: () => setEditingId(item.id) },
+        { text: 'Ta bort', style: 'destructive', onPress: () => requestDelete(item) },
+      ]);
+      return;
+    }
+    const ne = e?.nativeEvent || e;
+    const x = Number(ne?.pageX ?? 20);
+    const y = Number(ne?.pageY ?? 64);
+    setRowMenuPos({ x: Number.isFinite(x) ? x : 20, y: Number.isFinite(y) ? y : 64 });
+    setRowMenuItem(item);
+    setRowMenuVisible(true);
+  };
+
+  const rowMenuItems = [
+    { key: 'edit', label: 'Redigera', icon: <Ionicons name="create-outline" size={16} color="#0f172a" /> },
+    { key: 'delete', label: 'Ta bort', danger: true, icon: <Ionicons name="trash-outline" size={16} color="#b91c1c" /> },
+  ];
+
+  const { boxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(visible, {
+    defaultWidth: 720,
+    defaultHeight: 600,
+    minWidth: 400,
+    minHeight: 300,
+  });
+
+  const hasDragPosition = Platform.OS === 'web' && boxStyle && Object.keys(boxStyle).length > 0;
+  const defaultBoxStyle = hasDragPosition ? {} : { width: Platform.OS === 'web' ? '90vw' : '90%', maxWidth: 720, height: Platform.OS === 'web' ? '85vh' : '85%' };
+
+  if (!visible) return null;
+
+  const footer = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+      {isSelectionMode ? (
+        <TouchableOpacity
+          style={[styles.footerBtn, styles.footerBtnPrimary]}
+          onPress={handleSaveSelection}
+          disabled={savingSelection}
+          {...(Platform.OS === 'web' ? { cursor: savingSelection ? 'wait' : 'pointer' } : {})}
+        >
+          <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara val</Text>
+        </TouchableOpacity>
+      ) : null}
+      <TouchableOpacity style={styles.mainModalStangBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+        <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Stäng</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  return (
+    <>
+    <ModalBase
+      visible={visible}
+      onClose={onClose}
+      title="Kontoplan"
+      subtitle="Register över konton"
+      headerVariant="neutral"
+      titleIcon={<Ionicons name="list-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+      boxStyle={[defaultBoxStyle, boxStyle]}
+      overlayStyle={overlayStyle}
+      headerProps={headerProps}
+      resizeHandles={resizeHandles}
+      footer={footer}
+      contentStyle={{ padding: 0, flex: 1, minHeight: 0 }}
+    >
+          <View style={styles.toolbarSection}>
+            {!showContent ? (
+              <View style={styles.selectCompany}>
+                <Text style={styles.selectCompanyText}>
+                  {!cid && loading ? 'Laddar för ditt företag…' : 'Välj företag i sidomenyn eller i headern.'}
+                </Text>
+              </View>
+            ) : (
+              <>
+                {isSelectionMode && (
+                  <View style={[styles.toolbar, { marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <Text style={{ fontSize: 13, color: '#64748b' }}>Visa:</Text>
+                      <TouchableOpacity
+                        onPress={() => setFilterOnlySelected(false)}
+                        style={{
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 8,
+                          backgroundColor: !filterOnlySelected ? '#eff6ff' : 'transparent',
+                        }}
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '500', color: !filterOnlySelected ? '#2563eb' : '#64748b' }}>Se alla</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => setFilterOnlySelected(true)}
+                        style={{
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 8,
+                          backgroundColor: filterOnlySelected ? '#eff6ff' : 'transparent',
+                        }}
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '500', color: filterOnlySelected ? '#2563eb' : '#64748b' }}>
+                          Endast valda för {selectionContext?.entityName || (isFormMode ? 'formulär' : 'leverantör')}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+                <View style={styles.toolbar}>
+                  <View style={styles.searchWrap}>
+                    <Ionicons name="search" size={16} color="#64748b" />
+                    <TextInput
+                      style={styles.searchInput}
+                      value={search}
+                      onChangeText={setSearch}
+                      placeholder="Sök konto, benämning, beskrivning…"
+                      placeholderTextColor="#94a3b8"
+                      {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                    />
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {!isSelectionMode && (
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6 }}
+                        onPress={() => setShowInlineAddRow((v) => !v)}
+                        activeOpacity={0.7}
+                        accessibilityLabel={showInlineAddRow ? 'Dölj Lägg till snabbt-rad' : 'Visa Lägg till snabbt-rad'}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: showInlineAddRow }}
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                      >
+                        <Ionicons
+                          name={showInlineAddRow ? 'checkbox' : 'square-outline'}
+                          size={18}
+                          color={showInlineAddRow ? '#0ea5e9' : '#94a3b8'}
+                        />
+                        <Text style={{ fontSize: 12, color: '#475569', fontWeight: '500' }} numberOfLines={1}>
+                          Lägg till snabbt
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    {Platform.OS === 'web' && (
+                      <TouchableOpacity
+                        ref={excelBtnRef}
+                        style={styles.excelBtn}
+                        onPress={(ev) => {
+                          const ne = ev?.nativeEvent || ev;
+                          const target = ne?.target;
+                          if (target && typeof target.getBoundingClientRect === 'function') {
+                            const r = target.getBoundingClientRect();
+                            setExcelMenuPos({ x: r.left, y: r.bottom + 4 });
+                          } else {
+                            setExcelMenuPos({ x: 20, y: 200 });
+                          }
+                          setExcelMenuVisible(true);
+                        }}
+                        accessibilityLabel="Importera / exportera Excel"
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
+                      >
+                        <Ionicons name="document-outline" size={14} color="#167534" />
+                        <Text style={{ fontSize: 12, fontWeight: '500', color: '#167534' }}>Excel</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      style={[styles.iconBtn, styles.iconBtnPrimary]}
+                      onPress={() => setAddKontoplanModalVisible(true)}
+                      accessibilityLabel="Lägg till konto"
+                      {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                    >
+                      <Ionicons name="add" size={16} color="#fff" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.iconBtn}
+                      onPress={load}
+                      {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                    >
+                      <Ionicons name="refresh" size={14} color="#475569" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </>
+            )}
+            <View style={styles.toolbarDivider} />
+          </View>
+
+          <ScrollView
+            ref={tableScrollRef}
+            style={styles.tableScroll}
+            contentContainerStyle={styles.tableScrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {!showContent ? null : loading ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyTitle}>Laddar kontoplan…</Text>
+              </View>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator
+                contentContainerStyle={{ flexGrow: 1, minHeight: '100%', minWidth: '100%' }}
+                keyboardShouldPersistTaps="handled"
+                style={styles.tableScrollHorizontal}
+              >
+                <View style={[styles.tableWrap, { minWidth: '100%', flex: 1 }]}>
+                  <KontoplanTable
+                    items={sortedForDisplay}
+                    sortColumn={sortColumn}
+                    sortDirection={sortDirection}
+                    onSort={handleSort}
+                    editingId={editingId}
+                    saving={saving}
+                    onSaveEdit={handleSaveEdit}
+                    onCancelEdit={() => setEditingId(null)}
+                    onRowMenu={openRowMenu}
+                    onRowContextMenu={openRowMenu}
+                    onRowDoubleClick={(item) => setEditingId(item.id)}
+                    inlineEnabled={showContent && !isSelectionMode && showInlineAddRow}
+                    inlineSaving={inlineSaving}
+                    inlineValues={{
+                      konto: inlineKonto,
+                      benamning: inlineBenamning,
+                      beskrivning: inlineBeskrivning,
+                    }}
+                    onInlineChange={(field, value) => {
+                      if (field === 'konto') setInlineKonto(value);
+                      if (field === 'benamning') setInlineBenamning(value);
+                      if (field === 'beskrivning') setInlineBeskrivning(value);
+                    }}
+                    onInlineSave={handleInlineSave}
+                    selectionMode={isSelectionMode}
+                    selectedKonton={localSelectedKonton}
+                    onSelectionChange={isSelectionMode ? setLocalSelectedKonton : undefined}
+                  />
+                </View>
+              </ScrollView>
+            )}
+          </ScrollView>
+
+          {(notice || error) ? (
+            <Animated.View style={[styles.statusOverlay, { opacity: statusOpacity }]} pointerEvents="none">
+              <View style={[styles.statusBox, notice ? styles.statusBoxSuccess : styles.statusBoxError]}>
+                {notice ? (
+                  <>
+                    <Ionicons name="checkmark-circle" size={18} color="#15803d" />
+                    <Text style={{ fontSize: 13, color: '#15803d', fontWeight: '500' }}>{notice}</Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons name="warning" size={18} color="#dc2626" />
+                    <Text style={{ fontSize: 13, color: '#dc2626', fontWeight: '500' }}>{error}</Text>
+                  </>
+                )}
+              </View>
+            </Animated.View>
+          ) : null}
+    </ModalBase>
+
+      <ContextMenu
+        visible={rowMenuVisible}
+        x={rowMenuPos.x}
+        y={rowMenuPos.y}
+        items={rowMenuItems}
+        onClose={() => setRowMenuVisible(false)}
+        onSelect={(it) => {
+          setRowMenuVisible(false);
+          const item = rowMenuItem;
+          if (!item || !it) return;
+          if (it.key === 'edit') setEditingId(item.id);
+          else if (it.key === 'delete') requestDelete(item);
+        }}
+      />
+
+      <ConfirmModal
+        visible={!!deleteConfirmItem}
+        title="Radera konto"
+        message={
+          deleteConfirmItem
+            ? `Du är på väg att permanent radera kontot "${String(deleteConfirmItem.konto ?? '').trim()}${deleteConfirmItem.benamning ? ` – ${deleteConfirmItem.benamning}` : ''}".\nDetta går inte att ångra.`
+            : ''
+        }
+        cancelLabel="Avbryt"
+        confirmLabel="Radera"
+        danger
+        busy={deleting}
+        onCancel={() => setDeleteConfirmItem(null)}
+        onConfirm={confirmDelete}
+      />
+
+      <AddKontoplanModal
+        visible={addKontoplanModalVisible}
+        onClose={() => setAddKontoplanModalVisible(false)}
+        onSave={handleAddKontoplanSave}
+        saving={addKontoplanSaving}
+      />
+
+      {Platform.OS === 'web' && (
+        <>
+          <View style={{ position: 'absolute', opacity: 0, width: 0, height: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+            <input
+              ref={excelInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handleExcelFileChange}
+              style={{ width: 0, height: 0 }}
+            />
+          </View>
+          <ContextMenu
+            visible={excelMenuVisible}
+            x={excelMenuPos.x}
+            y={excelMenuPos.y}
+            items={[
+              { key: 'export', label: 'Exportera Excel' },
+              { key: 'import', label: 'Importera Excel' },
+            ]}
+            onClose={() => setExcelMenuVisible(false)}
+            onSelect={(it) => {
+              setExcelMenuVisible(false);
+              if (it?.key === 'export') exportExcel();
+              else if (it?.key === 'import') setTimeout(() => excelInputRef.current?.click(), 0);
+            }}
+          />
+        </>
+      )}
+
+      <ConfirmModal
+        visible={importConfirmVisible}
+        title="Importera kontoplan"
+        message={
+          importPlan
+            ? `Importen ersätter hela registret.\nSkapas: ${importPlan.toCreate.length}, Uppdateras: ${importPlan.toUpdate.length}, Raderas: ${importPlan.toDelete.length}`
+            : ''
+        }
+        cancelLabel="Avbryt"
+        confirmLabel="Importera"
+        busy={importBusy}
+        onCancel={() => { setImportConfirmVisible(false); setImportPlan(null); }}
+        onConfirm={runImport}
+      />
+    </>
+  );
+}

@@ -396,7 +396,16 @@ export default function SelectDropdown({
       }
     : null;
   const inputVariantStyle = isModalVariant ? { fontSize: 13, color: '#111' } : null;
-  const listVariantStyle = isModalVariant ? { borderColor: '#e2e8f0', borderRadius: 10 } : null;
+  const listVariantStyle = isModalVariant
+    ? {
+        borderColor: '#e2e8f0',
+        borderRadius: 10,
+        marginTop: 4,
+        ...(Platform.OS === 'web'
+          ? { boxShadow: '0 2px 8px rgba(0,0,0,0.12)' }
+          : { shadowOpacity: 0.12, shadowRadius: 6 }),
+      }
+    : null;
   const itemTextVariantStyle = isModalVariant ? { fontSize: 13, color: '#111' } : null;
   const fieldOpenStyle = open ? { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } : null;
   const dropdownList = (
@@ -449,7 +458,7 @@ export default function SelectDropdown({
               >
                 {label}
               </Text>
-              {renderOptionRight ? renderOptionRight(opt) : null}
+              {renderOptionRight ? renderOptionRight(opt, selected) : null}
             </View>
           </TouchableOpacity>
         );

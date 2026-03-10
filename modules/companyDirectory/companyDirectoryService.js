@@ -180,6 +180,24 @@ export async function unlinkContactFromCompany({ companyId, id, contactId }) {
 	return true;
 }
 
+export async function unlinkContactFromCustomer({ companyId, customerId, contactId }) {
+	const cid = safeText(companyId);
+	const custId = safeText(customerId);
+	const contact = safeText(contactId);
+	if (!cid || !custId || !contact) return false;
+	await updateDoc(doc(collection(db, 'foretag', cid, 'kunder'), custId), { contactIds: arrayRemove(contact), updatedAt: serverTimestamp() });
+	return true;
+}
+
+export async function linkContactToCustomer({ companyId, customerId, contactId }) {
+	const cid = safeText(companyId);
+	const custId = safeText(customerId);
+	const contact = safeText(contactId);
+	if (!cid || !custId || !contact) return false;
+	await updateDoc(doc(collection(db, 'foretag', cid, 'kunder'), custId), { contactIds: arrayUnion(contact), updatedAt: serverTimestamp() });
+	return true;
+}
+
 export function findExistingContact(contacts, { name, email, phone, contactCompanyName }) {
 	const list = Array.isArray(contacts) ? contacts : [];
 	const emailKey = normalizeEmail(email);
@@ -226,6 +244,7 @@ export async function upsertContactInRegistry({ companyId, existingContacts, con
 		contactCompanyName: safeText(contactCompanyName),
 		role: safeText(contact?.role),
 		phone: safeText(contact?.phone),
+		workPhone: safeText(contact?.workPhone),
 		email: safeText(contact?.email),
 		linkedSupplierId: linkedSupplierId ?? undefined,
 	}, cid);
@@ -237,6 +256,7 @@ export async function upsertContactInRegistry({ companyId, existingContacts, con
 		contactCompanyName: safeText(contactCompanyName),
 		role: safeText(contact?.role),
 		phone: safeText(contact?.phone),
+		workPhone: safeText(contact?.workPhone) ?? null,
 		email: safeText(contact?.email),
 		linkedSupplierId: linkedSupplierId ?? null,
 	};

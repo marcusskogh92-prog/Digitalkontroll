@@ -11,11 +11,16 @@ import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextIn
 import { PhaseChangeLoadingModal } from '../../../../../../components/common/Modals';
 import SelectDropdown from '../../../../../../components/common/SelectDropdown';
 import IsoDatePickerModal from '../../../../../../components/common/Modals/IsoDatePickerModal';
-import { fetchCompanyProject, hasDuplicateProjectNumber, patchCompanyProject, patchSharePointProjectMetadata, updateSharePointProjectPropertiesFromFirestoreProject, upsertProjectInfoTimelineMilestone } from '../../../../../../components/firebase';
+import ConfirmModal from '../../../../../../components/common/Modals/ConfirmModal';
+import { auth, fetchCompanyProject, fetchCompanySuppliers, fetchCompanyCustomers, getCompanySharePointSiteId, hasDuplicateProjectNumber, patchCompanyProject, patchSharePointProjectMetadata, renameSharePointProjectFolderAndUpdateProject, updateCompanySupplier, updateCompanyCustomer, updateSharePointProjectPropertiesFromFirestoreProject, upsertProjectInfoTimelineMilestone } from '../../../../../../components/firebase';
 import { emitProjectUpdated } from '../../../../../../components/projectBus';
+import { useProjectTimelineDates } from '../../../../../../hooks/useProjectTimelineDates';
 import { PROJECT_PHASES } from '../../../../../projects/constants';
 import PersonSelector from '../../components/PersonSelector';
 import { enqueueFsExcelSync } from '../../services/fragaSvarExcelSyncQueue';
+import { formatOrganizationNumber } from '../../../../../../utils/formatOrganizationNumber';
+import { formatMobileDisplay } from '../../../../../../utils/formatPhone';
+import ProjectAddressMap from '../../../../../../components/common/ProjectAddressMap';
 
 function isValidIsoDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
@@ -109,6 +114,30 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   // Date picker modal state for ISO dates
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [datePickerField, setDatePickerField] = useState(null); // 'sistaDagForFragor' | 'anbudsinlamning' | 'planeradByggstart' | 'klartForBesiktning'
+  const [clearConfirmField, setClearConfirmField] = useState(null); // samma keys – när satt visas ConfirmModal "Töm datum"
+
+  const { customDates: timelineCustomDates = [] } = useProjectTimelineDates(companyId || null, projectId || null);
+
+  const FIELD_TO_SOURCE_KEY = {
+    sistaDagForFragor: 'sista-dag-for-fragor',
+    anbudsinlamning: 'anbudsinlamning',
+    planeradByggstart: 'planerad-byggstart',
+    klartForBesiktning: 'klart-for-besiktning',
+  };
+  const hasOutlookForField = useCallback((fieldKey) => {
+    const sourceKey = FIELD_TO_SOURCE_KEY[fieldKey];
+    if (!sourceKey) return false;
+    const item = (timelineCustomDates || []).find(
+      (d) => String(d?.source || '').trim() === 'projectinfo' && String(d?.sourceKey || '').trim() === sourceKey
+    );
+    return Boolean(
+      item &&
+        (item.outlookEventId ||
+          item?.outlook?.eventId ||
+          item.outlookStatus === 'sent' ||
+          item?.outlook === 'sent')
+    );
+  }, [timelineCustomDates]);
 
   // Store original values to detect changes
   const [originalValues, setOriginalValues] = useState({});
@@ -136,12 +165,28 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   // Use ref to track previous project values to avoid unnecessary state updates
   const prevProjectRef = React.useRef(null);
   const prevProjectIdRef = React.useRef(null);
-  
+  // After save, avoid overwriting originalValues with stale project (parent may not have re-rendered yet)
+  const lastSavedInfoRef = React.useRef(null);
+  const lastSavedKundRef = React.useRef(null);
+  /** När true: tvinga hasChangesKundComputed till false i en render så att gul markering försvinner direkt efter Kund-sparning */
+  const kundJustSavedRef = React.useRef(false);
+
   // Update state when project values actually change (not just object reference)
   useEffect(() => {
     const nextPid = String(projectId || project?.id || '').trim();
     const prevPid = String(prevProjectIdRef.current || '').trim();
     const projectChanged = !!nextPid && !!prevPid && nextPid !== prevPid;
+
+    // If we just saved project info, don't overwrite originalValues with stale project (parent may not have re-rendered yet)
+    const saved = lastSavedInfoRef.current;
+    if (saved && project && !projectChanged) {
+      const projNum = String(project?.projectNumber ?? project?.number ?? project?.id ?? '').trim();
+      const projName = String(project?.projectName ?? project?.name ?? '').trim();
+      if (projNum !== saved.projectNumber || projName !== saved.projectName) {
+        return;
+      }
+      lastSavedInfoRef.current = null;
+    }
 
     // If user has unsaved edits, do NOT reset the entire card state due to background project updates.
     // Exception: if switching to a different project, always reset.
@@ -152,10 +197,12 @@ export default function OversiktSummary({ projectId, companyId, project }) {
       return;
     }
 
-    // Extract project values as a string for comparison
+    // Extract project values as a string for comparison (include projectNumber/projectName so sync runs when they change after save)
     const projectKey = project ? JSON.stringify({
       id: project.id,
       name: project.name,
+      projectNumber: project.projectNumber ?? project.number ?? project.id,
+      projectName: project.projectName ?? project.name,
       phase: project.phase || project.phaseKey,
       projectType: project.projectType,
       upphandlingsform: project.upphandlingsform,
@@ -169,6 +216,8 @@ export default function OversiktSummary({ projectId, companyId, project }) {
       kommun: project.kommun,
       region: project.region,
       fastighetsbeteckning: project.fastighetsbeteckning,
+      latitude: project.latitude,
+      longitude: project.longitude,
       // Canonical important dates (required fields)
       lastQuestionDate: project.lastQuestionDate,
       tenderSubmissionDate: project.tenderSubmissionDate,
@@ -182,8 +231,10 @@ export default function OversiktSummary({ projectId, companyId, project }) {
       anteckningar: project.anteckningar || project.beskrivning
     }) : '';
 
-    // Only update if project values actually changed, not just the object reference
-    if (prevProjectRef.current === projectKey) {
+    // If we just saved Kund, always apply lastSavedKundRef so state/originalValues stay in sync (don't return early)
+    const hasJustSavedKund = !!lastSavedKundRef.current;
+    // Only update if project values actually changed, not just the object reference (unless we just saved Kund)
+    if (!hasJustSavedKund && prevProjectRef.current === projectKey) {
       return;
     }
     
@@ -205,6 +256,8 @@ export default function OversiktSummary({ projectId, companyId, project }) {
       return name;
     })();
 
+    const savedKund = lastSavedKundRef.current;
+    if (savedKund) lastSavedKundRef.current = null;
     const newValues = {
       projectNumber: rawProjectNumber,
       projectName: cleanedProjectName,
@@ -212,15 +265,17 @@ export default function OversiktSummary({ projectId, companyId, project }) {
       projectType: project?.projectType || '',
       upphandlingsform: project?.upphandlingsform || '',
       status: project?.status || 'ongoing',
-      kund: project?.kund || project?.client || '',
-      organisationsnummer: project?.organisationsnummer || '',
-      kontaktperson: project?.kontaktperson || null,
-      telefon: project?.telefon || '',
-      epost: project?.epost || project?.email || '',
+      kund: savedKund ? savedKund.kund : (project?.kund || project?.client || ''),
+      organisationsnummer: savedKund ? savedKund.organisationsnummer : formatOrganizationNumber(project?.organisationsnummer || ''),
+      kontaktperson: savedKund ? savedKund.kontaktperson : (project?.kontaktperson || null),
+      telefon: savedKund ? savedKund.telefon : (project?.telefon || ''),
+      epost: savedKund ? savedKund.epost : (project?.epost || project?.email || ''),
       adress: project?.adress || '',
       kommun: project?.kommun || '',
       region: project?.region || '',
       fastighetsbeteckning: project?.fastighetsbeteckning || '',
+      latitude: project?.latitude ?? null,
+      longitude: project?.longitude ?? null,
       // Hydrate from canonical fields first, then fall back to legacy mirrors.
       sistaDagForFragor: project?.lastQuestionDate || project?.sistaDagForFragor || '',
       anbudsinlamning: project?.tenderSubmissionDate || project?.anbudsinlamning || project?.anbudstid || '',
@@ -237,14 +292,18 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setUpphandlingsform(newValues.upphandlingsform);
     setStatus(newValues.status);
     setKund(newValues.kund);
-    setOrganisationsnummer(newValues.organisationsnummer);
+    setOrganisationsnummer(formatOrganizationNumber(newValues.organisationsnummer || ''));
     setKontaktperson(newValues.kontaktperson);
+    setLinkedKundSupplierId(project?.linkedKundSupplierId ?? null);
+    setLinkedKundCustomerId(project?.linkedKundCustomerId ?? null);
     setTelefon(newValues.telefon);
     setEpost(newValues.epost);
     setAdress(newValues.adress);
     setKommun(newValues.kommun);
     setRegion(newValues.region);
     setFastighetsbeteckning(newValues.fastighetsbeteckning);
+    setLatitude(newValues.latitude ?? null);
+    setLongitude(newValues.longitude ?? null);
     setSistaDagForFragor(newValues.sistaDagForFragor);
     setAnbudsinlamning(newValues.anbudsinlamning);
     setPlaneradByggstart(newValues.planeradByggstart);
@@ -266,6 +325,13 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   const [kund, setKund] = useState(project?.kund || project?.client || '');
   const [organisationsnummer, setOrganisationsnummer] = useState(project?.organisationsnummer || '');
   const [kontaktperson, setKontaktperson] = useState(project?.kontaktperson || null); // { type, id, name, email, phone }
+  const [linkedKundSupplierId, setLinkedKundSupplierId] = useState(project?.linkedKundSupplierId ?? null);
+  const [linkedKundCustomerId, setLinkedKundCustomerId] = useState(project?.linkedKundCustomerId ?? null);
+  const [companySearchQuery, setCompanySearchQuery] = useState('');
+  const [companySearchResults, setCompanySearchResults] = useState([]);
+  const [companySearchOpen, setCompanySearchOpen] = useState(false);
+  const [companySearchLoading, setCompanySearchLoading] = useState(false);
+  const companySearchDebounceRef = React.useRef(null);
   const [telefon, setTelefon] = useState(project?.telefon || '');
   const [epost, setEpost] = useState(project?.epost || project?.email || '');
 
@@ -274,6 +340,9 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   const [kommun, setKommun] = useState(project?.kommun || '');
   const [region, setRegion] = useState(project?.region || '');
   const [fastighetsbeteckning, setFastighetsbeteckning] = useState(project?.fastighetsbeteckning || '');
+  const [latitude, setLatitude] = useState(project?.latitude != null ? project.latitude : null);
+  const [longitude, setLongitude] = useState(project?.longitude != null ? project.longitude : null);
+  const [addressMode, setAddressMode] = useState('manual'); // 'manual' | 'map'
 
   // Viktiga datum state (4 fixed fields)
   const [sistaDagForFragor, setSistaDagForFragor] = useState(project?.sistaDagForFragor || '');
@@ -295,7 +364,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     }
 
     const u = (updates && typeof updates === 'object') ? { ...updates } : {};
-    const patch = { ...u };
+    const patch = { ...u, companyId: cid };
 
     const beforePn = String(project?.projectNumber || project?.number || project?.id || '').trim();
     const beforePnm = String(project?.projectName || project?.name || '').trim();
@@ -446,11 +515,17 @@ export default function OversiktSummary({ projectId, companyId, project }) {
 
   // Helper function to check if adress info has changes
   const checkAdressChanges = () => {
+    const latEq = (latitude == null && (originalValues.latitude == null || originalValues.latitude === '')) ||
+      (latitude != null && Number(latitude) === Number(originalValues.latitude));
+    const lngEq = (longitude == null && (originalValues.longitude == null || originalValues.longitude === '')) ||
+      (longitude != null && Number(longitude) === Number(originalValues.longitude));
     return (
       adress.trim() !== (originalValues.adress || '') ||
       kommun.trim() !== (originalValues.kommun || '') ||
       region.trim() !== (originalValues.region || '') ||
-      fastighetsbeteckning.trim() !== (originalValues.fastighetsbeteckning || '')
+      fastighetsbeteckning.trim() !== (originalValues.fastighetsbeteckning || '') ||
+      !latEq ||
+      !lngEq
     );
   };
 
@@ -472,14 +547,17 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   // Memoize originalValues string to prevent unnecessary recalculations
   const originalValuesKey = React.useMemo(() => {
     return JSON.stringify(originalValues);
-  }, [originalValues.projectNumber, originalValues.projectName, originalValues.phaseKey, originalValues.projectType, originalValues.upphandlingsform, originalValues.status, originalValues.kund, originalValues.organisationsnummer, JSON.stringify(originalValues.kontaktperson), originalValues.telefon, originalValues.epost, originalValues.adress, originalValues.kommun, originalValues.region, originalValues.fastighetsbeteckning, originalValues.sistaDagForFragor, originalValues.anbudsinlamning, originalValues.planeradByggstart, originalValues.klartForBesiktning, originalValues.anteckningar]);
+  }, [originalValues.projectNumber, originalValues.projectName, originalValues.phaseKey, originalValues.projectType, originalValues.upphandlingsform, originalValues.status, originalValues.kund, originalValues.organisationsnummer, JSON.stringify(originalValues.kontaktperson), originalValues.telefon, originalValues.epost, originalValues.adress, originalValues.kommun, originalValues.region, originalValues.fastighetsbeteckning, originalValues.latitude, originalValues.longitude, originalValues.sistaDagForFragor, originalValues.anbudsinlamning, originalValues.planeradByggstart, originalValues.klartForBesiktning, originalValues.anteckningar]);
 
   // Calculate changes directly in render instead of useEffect to avoid re-renders during typing
   // These are computed values, not state, to prevent blocking input
   // Use string comparison for originalValues to avoid object reference issues
   const hasChangesInfoComputed = React.useMemo(() => checkInfoChanges(), [projectNumber, projectName, phaseKey, projectType, upphandlingsform, status, originalValuesKey]);
-  const hasChangesKundComputed = React.useMemo(() => checkKundChanges(), [kund, organisationsnummer, JSON.stringify(kontaktperson), telefon, epost, originalValuesKey]);
-  const hasChangesAdressComputed = React.useMemo(() => checkAdressChanges(), [adress, kommun, region, fastighetsbeteckning, originalValuesKey]);
+  const hasChangesKundComputed = React.useMemo(() => {
+    if (kundJustSavedRef.current) return false;
+    return checkKundChanges();
+  }, [kund, organisationsnummer, JSON.stringify(kontaktperson), telefon, epost, originalValuesKey]);
+  const hasChangesAdressComputed = React.useMemo(() => checkAdressChanges(), [adress, kommun, region, fastighetsbeteckning, latitude, longitude, originalValuesKey]);
   const hasChangesTiderComputed = React.useMemo(() => checkTiderChanges(), [sistaDagForFragor, anbudsinlamning, planeradByggstart, klartForBesiktning, originalValuesKey]);
   const hasChangesAnteckningarComputed = React.useMemo(() => checkAnteckningarChanges(), [anteckningar, originalValuesKey]);
 
@@ -538,10 +616,15 @@ export default function OversiktSummary({ projectId, companyId, project }) {
 
   const resetKundCardState = React.useCallback(() => {
     setKund(originalValues.kund || '');
-    setOrganisationsnummer(originalValues.organisationsnummer || '');
+    setOrganisationsnummer(formatOrganizationNumber(originalValues.organisationsnummer || ''));
     setKontaktperson(originalValues.kontaktperson || null);
     setTelefon(originalValues.telefon || '');
     setEpost(originalValues.epost || '');
+    setLinkedKundSupplierId(project?.linkedKundSupplierId ?? null);
+    setLinkedKundCustomerId(project?.linkedKundCustomerId ?? null);
+    setCompanySearchQuery('');
+    setCompanySearchResults([]);
+    setCompanySearchOpen(false);
     setKontaktpersonSelectorVisible(false);
     setHasChangesKund(false);
   }, [
@@ -550,6 +633,8 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     originalValues.kontaktperson,
     originalValues.telefon,
     originalValues.epost,
+    project?.linkedKundSupplierId,
+    project?.linkedKundCustomerId,
   ]);
 
   const resetAdressCardState = React.useCallback(() => {
@@ -557,12 +642,16 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setKommun(originalValues.kommun || '');
     setRegion(originalValues.region || '');
     setFastighetsbeteckning(originalValues.fastighetsbeteckning || '');
+    setLatitude(originalValues.latitude ?? null);
+    setLongitude(originalValues.longitude ?? null);
     setHasChangesAdress(false);
   }, [
     originalValues.adress,
     originalValues.kommun,
     originalValues.region,
     originalValues.fastighetsbeteckning,
+    originalValues.latitude,
+    originalValues.longitude,
   ]);
 
   const resetTiderCardState = React.useCallback(() => {
@@ -668,9 +757,93 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setUpphandlingsform(val);
   }, []);
 
+  const handleCompanySearch = useCallback(
+    (query) => {
+      if (companySearchDebounceRef.current) clearTimeout(companySearchDebounceRef.current);
+      const q = String(query ?? '').trim();
+      setCompanySearchQuery(q);
+      if (q.length < 2) {
+        setCompanySearchResults([]);
+        setCompanySearchOpen(false);
+        return;
+      }
+      companySearchDebounceRef.current = setTimeout(async () => {
+        const cid = String(companyId || '').trim();
+        if (!cid) {
+          setCompanySearchResults([]);
+          companySearchDebounceRef.current = null;
+          return;
+        }
+        setCompanySearchLoading(true);
+        try {
+          const [suppliers, customers] = await Promise.all([
+            fetchCompanySuppliers(cid),
+            fetchCompanyCustomers(cid),
+          ]);
+          const lower = q.toLowerCase();
+          const fromSuppliers = (suppliers || [])
+            .filter((s) => String(s?.companyName ?? '').trim().toLowerCase().includes(lower))
+            .map((s) => ({
+              id: s.id,
+              name: String(s.companyName ?? '').trim(),
+              type: 'supplier',
+              organizationNumber: s.organizationNumber ?? '',
+            }));
+          const fromCustomers = (customers || [])
+            .filter((c) => String(c?.name ?? '').trim().toLowerCase().includes(lower))
+            .map((c) => ({
+              id: c.id,
+              name: String(c.name ?? '').trim(),
+              type: 'customer',
+              organizationNumber: c.personalOrOrgNumber ?? '',
+            }));
+          const combined = [...fromSuppliers, ...fromCustomers].slice(0, 15);
+          setCompanySearchResults(combined);
+          setCompanySearchOpen(combined.length > 0);
+        } catch {
+          setCompanySearchResults([]);
+        } finally {
+          setCompanySearchLoading(false);
+          companySearchDebounceRef.current = null;
+        }
+      }, 300);
+    },
+    [companyId]
+  );
+
+  const handleSelectCompany = useCallback((company) => {
+    if (!company) return;
+    const name = String(company.name ?? '').trim();
+    const orgNr = formatOrganizationNumber(String(company.organizationNumber ?? '').trim());
+    setKund(name);
+    setOrganisationsnummer(orgNr);
+    if (company.type === 'supplier') {
+      setLinkedKundSupplierId(company.id || null);
+      setLinkedKundCustomerId(null);
+    } else {
+      setLinkedKundCustomerId(company.id || null);
+      setLinkedKundSupplierId(null);
+    }
+    setCompanySearchResults([]);
+    setCompanySearchOpen(false);
+    setCompanySearchQuery('');
+    setHasChangesKund(true);
+  }, []);
+
   const handleKundChange = useCallback((val) => {
     setKund(val);
-  }, []);
+    setCompanySearchQuery(val);
+    if (String(val || '').trim().length >= 2) {
+      handleCompanySearch(val);
+    } else {
+      setCompanySearchResults([]);
+      setCompanySearchOpen(false);
+      if (!val) {
+        setLinkedKundSupplierId(null);
+        setLinkedKundCustomerId(null);
+      }
+    }
+  }, [handleCompanySearch]);
 
   const handleOrganisationsnummerChange = useCallback((val) => {
     setOrganisationsnummer(val);
@@ -700,6 +873,17 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setFastighetsbeteckning(val);
   }, []);
 
+  const handleAddressFromMap = useCallback(({ latitude: lat, longitude: lng, adress: a, kommun: k, region: r }) => {
+    if (lat != null && lng != null) {
+      setLatitude(lat);
+      setLongitude(lng);
+    }
+    if (a !== undefined) setAdress(a);
+    if (k !== undefined) setKommun(k);
+    if (r !== undefined) setRegion(r);
+    setHasChangesAdress(true);
+  }, []);
+
   const handleSistaDagForFragorChange = useCallback((val) => {
     setSistaDagForFragor(val);
   }, []);
@@ -725,6 +909,66 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setDatePickerVisible(false);
     setDatePickerField(null);
   }, []);
+
+  const requestClearDate = useCallback((fieldKey) => {
+    if (datePickerField === fieldKey) {
+      setDatePickerVisible(false);
+      setDatePickerField(null);
+    }
+    setClearConfirmField(fieldKey);
+  }, [datePickerField]);
+
+  const performClearDate = useCallback(async () => {
+    const fieldKey = clearConfirmField;
+    setClearConfirmField(null);
+    if (!fieldKey || !companyId || !projectId) return;
+
+    const sourceKey = FIELD_TO_SOURCE_KEY[fieldKey];
+    const empty = '';
+    const updates = {};
+    const canonical = {};
+    const legacyMirror = {};
+    if (fieldKey === 'sistaDagForFragor') {
+      updates.sistaDagForFragor = empty;
+      canonical.lastQuestionDate = empty;
+      setSistaDagForFragor(empty);
+    } else if (fieldKey === 'anbudsinlamning') {
+      updates.anbudsinlamning = empty;
+      canonical.tenderSubmissionDate = empty;
+      legacyMirror.anbudstid = empty;
+      setAnbudsinlamning(empty);
+    } else if (fieldKey === 'planeradByggstart') {
+      updates.planeradByggstart = empty;
+      canonical.plannedConstructionStart = empty;
+      legacyMirror.byggstart = empty;
+      setPlaneradByggstart(empty);
+    } else if (fieldKey === 'klartForBesiktning') {
+      updates.klartForBesiktning = empty;
+      canonical.readyForInspectionDate = empty;
+      legacyMirror.fardigstallning = empty;
+      setKlartForBesiktning(empty);
+    }
+    showSavingFeedback();
+    setSaving(true);
+    try {
+      const updatedProject = await updateProjectInHierarchy({ ...canonical, ...updates, ...legacyMirror });
+      await upsertProjectInfoTimelineMilestone(companyId, projectId, {
+        key: sourceKey,
+        title: fieldKey === 'sistaDagForFragor' ? 'Sista dag för frågor' : fieldKey === 'anbudsinlamning' ? 'Anbudsinlämning' : fieldKey === 'planeradByggstart' ? 'Planerad byggstart' : 'Klart för besiktning',
+        date: empty,
+      });
+      setOriginalValues((prev) => ({ ...prev, ...updates }));
+      setHasChangesTider(false);
+      emitProjectUpdated(updatedProject);
+      showSaveSuccessFeedback('Datumet har tagits bort');
+    } catch (error) {
+      console.error('[OversiktSummary] Error clearing date:', error);
+      hideSaveFeedback();
+      Alert.alert('Fel', `Kunde inte ta bort datum: ${error?.message || 'Okänt fel'}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [clearConfirmField, companyId, projectId, updateProjectInHierarchy, showSavingFeedback, hideSaveFeedback, showSaveSuccessFeedback]);
 
   const datePickerValue = React.useMemo(() => {
     if (datePickerField === 'sistaDagForFragor') return sistaDagForFragor;
@@ -855,112 +1099,121 @@ export default function OversiktSummary({ projectId, companyId, project }) {
               console.log('[OversiktSummary] Starting save of project info:', updates);
               const updatedProject = await updateProjectInHierarchy(updates);
 
-              // Persist SharePoint project metadata for phase (and display fields) when possible
-              try {
-                const siteId = String(
-                  project?.siteId ||
-                  project?.siteID ||
-                  project?.sharePointSiteId ||
-                  project?.site?.id ||
-                  project?.site?.siteId ||
-                  project?.folder?.siteId ||
-                  project?.folder?.siteID ||
-                  ''
-                ).trim();
-                const projectPath = String(
-                  project?.projectPath ||
-                  project?.path ||
-                  project?.sharePointPath ||
-                  project?.folder?.path ||
-                  ''
-                ).trim();
+              const beforePn = String(originalValues?.projectNumber || '').trim();
+              const beforePnm = String(originalValues?.projectName || '').trim();
+              const afterPn = String(projectNumber || '').trim();
+              const afterPnm = String(projectName || '').trim();
+              const identityChanged = beforePn !== afterPn || beforePnm !== afterPnm;
 
-                // companyIdOverride can be empty here; firebase helpers will resolve via claims/storage.
-                if (siteId && projectPath) {
-                  const metaResult = await patchSharePointProjectMetadata(companyId || null, {
-                    companyId: companyId || undefined,
-                    siteId,
-                    projectPath,
-                    phaseKey,
-                    projectNumber: projectNumber.trim(),
-                    projectName: projectName.trim(),
-                  });
+              let siteId = String(
+                project?.siteId ||
+                project?.siteID ||
+                project?.sharePointSiteId ||
+                project?.site?.id ||
+                project?.site?.siteId ||
+                project?.folder?.siteId ||
+                project?.folder?.siteID ||
+                ''
+              ).trim();
+              const projectPath = String(
+                project?.projectPath ||
+                project?.path ||
+                project?.sharePointPath ||
+                project?.folder?.path ||
+                project?.rootFolderPath ||
+                ''
+              ).trim();
 
-                  console.log('[OversiktSummary] SharePoint metadata saved:', {
-                    companyId: companyId || '(resolved)',
-                    key: `${siteId}|${projectPath}`,
-                    docId: metaResult?.id || null,
-                    phaseKey,
-                  });
-
-                  // Kick SharePointLeftPanel/HomeScreen to reload metadata so the color updates immediately.
-                  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-                    try { window.dispatchEvent(new Event('dkSharePointMetaUpdated')); } catch (_e) {}
-                  }
-                } else {
-                  console.warn('[OversiktSummary] Missing siteId/projectPath; cannot persist SharePoint metadata', {
-                    companyId,
-                    siteId,
-                    projectPath,
-                    projectKeys: Object.keys(project || {}),
-                  });
-                  try {
-                    Alert.alert(
-                      'Kunde inte spara projektstatus',
-                      'Saknar koppling till SharePoint för detta projekt (siteId eller projectPath). Testa att gå tillbaka till dashboard och öppna projektet igen.'
-                    );
-                  } catch (_e) {}
-                }
-              } catch (metaErr) {
-                console.error('[OversiktSummary] Failed saving SharePoint project metadata:', {
-                  message: metaErr?.message || String(metaErr || ''),
-                  companyId,
-                  siteId: project?.siteId || project?.siteID || project?.site?.id || null,
-                  projectPath: project?.projectPath || project?.path || project?.sharePointPath || project?.folder?.path || null,
-                });
-
-                // If we can't persist metadata, the dashboard/left panel will NOT update after refresh.
-                // Make this obvious to the user.
+              if (!siteId && projectPath && (companyId || '').trim()) {
                 try {
-                  const msg = String(metaErr?.message || '').toLowerCase();
-                  const isPermission = msg.includes('permission') || msg.includes('denied');
-                  Alert.alert(
-                    'Kunde inte spara skede',
-                    isPermission
-                      ? 'Saknar behörighet att spara skede i databasen. Testa att logga ut/in och kontrollera att du är i rätt företag.'
-                      : 'Skede kunde inte sparas i databasen. Dashboard/vänsterpanelen kan därför visa fel färg tills detta är löst.'
-                  );
+                  const resolved = await getCompanySharePointSiteId(String(companyId || '').trim());
+                  if (resolved) siteId = String(resolved).trim();
                 } catch (_e) {}
               }
 
-              console.log('[OversiktSummary] Project updated successfully:', { id: updatedProject?.id, name: updatedProject?.name, phase: updatedProject?.phase });
+              let projectToEmit = updatedProject;
 
-              // Backend is source of truth: emit what Firestore returns.
-              emitProjectUpdated(updatedProject);
+              if (siteId && projectPath) {
+                if (identityChanged) {
+                  try {
+                    await renameSharePointProjectFolderAndUpdateProject(companyId || null, {
+                      siteId,
+                      projectPath,
+                      projectId: String(projectId || project?.id || '').trim(),
+                      phaseKey,
+                    }, afterPn, afterPnm);
+                    const cid = String(companyId || '').trim();
+                    const pid = String(projectId || project?.id || '').trim();
+                    if (cid && pid) {
+                      const fetched = await fetchCompanyProject(cid, pid);
+                      if (fetched) projectToEmit = { ...(project || {}), ...fetched };
+                    }
+                    console.log('[OversiktSummary] SharePoint project folder renamed and project path updated');
+                  } catch (renameErr) {
+                    console.error('[OversiktSummary] Failed to rename SharePoint project folder:', renameErr?.message || renameErr);
+                    try {
+                      Alert.alert(
+                        'Projektmappen kunde inte bytas namn i SharePoint',
+                        (renameErr?.message || String(renameErr || '')).trim() || 'Projektinformationen är sparad i systemet, men mappnamnet i SharePoint är oförändrat. Kontrollera behörigheter och försök igen.'
+                      );
+                    } catch (_e) {}
+                  }
+                }
+                if (!identityChanged) {
+                  try {
+                    await patchSharePointProjectMetadata(companyId || null, {
+                      companyId: companyId || undefined,
+                      siteId,
+                      projectPath,
+                      phaseKey,
+                      projectNumber: afterPn,
+                      projectName: afterPnm,
+                    });
+                  } catch (metaErr) {
+                    console.error('[OversiktSummary] Failed saving SharePoint project metadata:', metaErr?.message || metaErr);
+                  }
+                }
+                if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+                  try { window.dispatchEvent(new Event('dkSharePointMetaUpdated')); } catch (_e) {}
+                }
+              } else if (!siteId || !projectPath) {
+                console.warn('[OversiktSummary] Missing siteId/projectPath; cannot persist SharePoint metadata', {
+                  companyId,
+                  siteId,
+                  projectPath,
+                  projectKeys: Object.keys(project || {}),
+                });
+              }
+
+              // Ensure display name is set so left panel and header update (fullName used by hierarchy/topbar)
+              const displayFullName = (afterPn && afterPnm) ? `${afterPn} – ${afterPnm}` : (projectToEmit?.fullName || projectToEmit?.name || '');
+              const projectToEmitWithDisplay = { ...projectToEmit, fullName: displayFullName, name: projectToEmit?.name || afterPnm, projectNumber: afterPn, projectName: afterPnm };
+
+              console.log('[OversiktSummary] Project updated successfully:', { id: projectToEmitWithDisplay?.id, name: projectToEmitWithDisplay?.name, phase: projectToEmitWithDisplay?.phase });
+
+              // Backend is source of truth: emit what Firestore returns (with display fields so left panel/header update).
+              emitProjectUpdated(projectToEmitWithDisplay);
 
               // Best-effort: refresh FS-logg.xlsx so Excel headers reflect live metadata.
               try {
-                const beforePn = String(originalValues?.projectNumber || '').trim();
-                const beforePnm = String(originalValues?.projectName || '').trim();
-                const afterPn = String(projectNumber || '').trim();
-                const afterPnm = String(projectName || '').trim();
                 const cid = String(companyId || '').trim();
                 const pid = String(projectId || project?.id || '').trim();
-                if (cid && pid && (beforePn !== afterPn || beforePnm !== afterPnm)) {
+                if (cid && pid && identityChanged) {
                   enqueueFsExcelSync(cid, pid, { reason: 'project-metadata-updated' });
                 }
               } catch (_e) {}
               
-              // Update original values and reset change flag
+              // Update original values and reset change flag so the yellow "changed" highlight disappears
               setOriginalValues(prev => ({
                 ...prev,
-                projectNumber: projectNumber.trim(),
-                projectName: projectName.trim(),
+                projectNumber: afterPn,
+                projectName: afterPnm,
                 phaseKey: phaseKey,
                 projectType: projectType.trim(),
                 upphandlingsform: upphandlingsform.trim(),
               }));
               setHasChangesInfo(false);
+              lastSavedInfoRef.current = { projectNumber: afterPn, projectName: afterPnm };
               showSaveSuccessFeedback('Projektinformation har uppdaterats');
             } catch (error) {
               console.error('[OversiktSummary] Error saving project info:', error);
@@ -973,7 +1226,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
           onCancel={resetInfoCardState}
         >
           <InfoRow
-            key="projektnummer"
+            key={`projektnummer-${String(originalValues.projectNumber ?? '')}`}
             label="Projektnummer"
             value={projectNumber}
             onChange={handleProjectNumberChange}
@@ -981,7 +1234,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             originalValue={originalValues.projectNumber || ''}
           />
           <InfoRow
-            key="projektnamn"
+            key={`projektnamn-${String(originalValues.projectName ?? '')}`}
             label="Projektnamn"
             value={projectName}
             onChange={handleProjectNameChange}
@@ -1049,52 +1302,116 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             showSavingFeedback();
             setSaving(true);
             try {
+              // Tvinga uppdaterad token så att Firestore-reglerna ser senaste claims (t.ex. superadmin)
+              try {
+                if (auth?.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
+              } catch (_) {}
+
               const updates = {
                 kund: kund.trim(),
                 organisationsnummer: organisationsnummer.trim(),
                 kontaktperson,
                 telefon: telefon.trim(),
-                epost: epost.trim()
+                epost: epost.trim(),
+                linkedKundSupplierId: linkedKundSupplierId || null,
+                linkedKundCustomerId: linkedKundCustomerId || null,
               };
 
               const updatedProject = await updateProjectInHierarchy(updates);
               emitProjectUpdated(updatedProject);
-              
-              setOriginalValues(prev => ({
-                ...prev,
+
+              const orgNrTrim = organisationsnummer.trim();
+              if ((linkedKundSupplierId || linkedKundCustomerId) && orgNrTrim) {
+                try {
+                  const cid = String(companyId || '').trim();
+                  if (linkedKundSupplierId) {
+                    await updateCompanySupplier({ id: linkedKundSupplierId, patch: { organizationNumber: orgNrTrim } }, cid);
+                  } else if (linkedKundCustomerId) {
+                    await updateCompanyCustomer({ id: linkedKundCustomerId, patch: { personalOrOrgNumber: orgNrTrim } }, cid);
+                  }
+                  Alert.alert('Uppdaterat', 'Org-nr uppdaterat i leverantörsregistret.');
+                } catch (regErr) {
+                  console.warn('[OversiktSummary] Kunde inte uppdatera org.nr i register:', regErr?.message || regErr);
+                }
+              }
+
+              const savedKundValues = {
                 kund: kund.trim(),
-                organisationsnummer: organisationsnummer.trim(),
+                organisationsnummer: orgNrTrim,
                 kontaktperson,
                 telefon: telefon.trim(),
                 epost: epost.trim()
+              };
+              lastSavedKundRef.current = savedKundValues;
+              kundJustSavedRef.current = true;
+              setOriginalValues(prev => ({
+                ...prev,
+                ...savedKundValues
               }));
               setHasChangesKund(false);
               showSaveSuccessFeedback('Kundinformation har uppdaterats');
+              setTimeout(() => { kundJustSavedRef.current = false; }, 0);
             } catch (error) {
+              const isPermissionDenied = error?.code === 'permission-denied' || (error?.message && String(error.message).toLowerCase().includes('permission'));
               console.error('[OversiktSummary] Error saving kund info:', error);
               hideSaveFeedback();
-              Alert.alert('Fel', `Kunde inte spara kundinformation: ${error.message || 'Okänt fel'}`);
+              const message = isPermissionDenied
+                ? 'Sparningen nekas av Firestore (behörighet). Kontrollera att Firestore-reglerna är deployade (npm run firebase:deploy:rules) och att du är medlem i projektets företag.'
+                : `Kunde inte spara kundinformation: ${error.message || 'Okänt fel'}`;
+              Alert.alert('Fel', message);
             } finally {
               setSaving(false);
             }
           }}
           onCancel={resetKundCardState}
         >
-          <InfoRow
-            key="kund"
-            label="Företag"
-            value={kund}
-            onChange={handleKundChange}
-            placeholder="Kundens företagsnamn"
-            originalValue={originalValues.kund || ''}
-          />
+          <View style={[styles.infoRow, { overflow: 'visible', position: 'relative', zIndex: companySearchOpen ? 2000 : undefined }]}>
+            <Text style={styles.infoLabel}>Företag:</Text>
+            <View style={{ flex: 1, minWidth: 0, position: 'relative', overflow: 'visible' }}>
+              <TextInput
+                value={kund}
+                onChangeText={handleKundChange}
+                placeholder="Skriv minst 2 tecken för att söka i leverantörs- och kundregister"
+                placeholderTextColor="#94A3B8"
+                style={[
+                  styles.infoInput,
+                  (kund.trim() !== (originalValues.kund || '').trim()) && styles.infoInputChanged,
+                ]}
+              />
+              {companySearchLoading ? (
+                <View style={{ position: 'absolute', right: 10, top: 0, bottom: 0, justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 12, color: '#64748b' }}>Söker…</Text>
+                </View>
+              ) : null}
+              {companySearchOpen && companySearchResults.length > 0 ? (
+                <View style={[styles.dropdownList, { position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 0 }]}>
+                  {companySearchResults.map((company) => (
+                    <Pressable
+                      key={`${company.type}-${company.id}`}
+                      onPress={() => handleSelectCompany(company)}
+                      style={({ pressed }) => [
+                        styles.dropdownItem,
+                        pressed ? styles.dropdownItemSelected : null,
+                      ]}
+                    >
+                      <Text style={styles.dropdownItemText} numberOfLines={1}>{company.name}</Text>
+                      {company.organizationNumber ? (
+                        <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }} numberOfLines={1}>{formatOrganizationNumber(company.organizationNumber)}</Text>
+                      ) : null}
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          </View>
           <InfoRow
             key="organisationsnummer"
             label="Organisationsnummer"
             value={organisationsnummer}
             onChange={handleOrganisationsnummerChange}
-            placeholder="Org.nr"
+            placeholder="Org.nr (xxxxxx-xxxx)"
             originalValue={originalValues.organisationsnummer || ''}
+            transformInput={formatOrganizationNumber}
           />
           <PersonRow
             label="Kontaktperson"
@@ -1102,12 +1419,14 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             onSelect={() => setKontaktpersonSelectorVisible(true)}
             onClear={() => {
               setKontaktperson(null);
+              setTelefon('');
+              setEpost('');
               setHasChangesKund(true);
             }}
             placeholder="Välj kontaktperson..."
             hasChanged={JSON.stringify(kontaktperson) !== JSON.stringify(originalValues.kontaktperson)}
           />
-          <InfoRow
+          <TelefonRow
             key="telefon"
             label="Telefon"
             value={telefon}
@@ -1122,6 +1441,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             onChange={handleEpostChange}
             placeholder="E-postadress"
             originalValue={originalValues.epost || ''}
+            textColor="#1976D2"
           />
         </InfoCard>
           </View>
@@ -1144,18 +1464,22 @@ export default function OversiktSummary({ projectId, companyId, project }) {
                 adress: adress.trim(),
                 kommun: kommun.trim(),
                 region: region.trim(),
-                fastighetsbeteckning: fastighetsbeteckning.trim()
+                fastighetsbeteckning: fastighetsbeteckning.trim(),
+                latitude: latitude ?? null,
+                longitude: longitude ?? null,
               };
 
               const updatedProject = await updateProjectInHierarchy(updates);
               emitProjectUpdated(updatedProject);
-              
+
               setOriginalValues(prev => ({
                 ...prev,
                 adress: adress.trim(),
                 kommun: kommun.trim(),
                 region: region.trim(),
-                fastighetsbeteckning: fastighetsbeteckning.trim()
+                fastighetsbeteckning: fastighetsbeteckning.trim(),
+                latitude: latitude ?? null,
+                longitude: longitude ?? null,
               }));
               setHasChangesAdress(false);
               showSaveSuccessFeedback('Adressinformation har uppdaterats');
@@ -1169,38 +1493,68 @@ export default function OversiktSummary({ projectId, companyId, project }) {
           }}
           onCancel={resetAdressCardState}
         >
-          <InfoRow
-            key="adress"
-            label="Adress"
-            value={adress}
-            onChange={handleAdressChange}
-            placeholder="Gatuadress"
-            originalValue={originalValues.adress || ''}
-          />
-          <InfoRow
-            key="kommun"
-            label="Ort"
-            value={kommun}
-            onChange={handleKommunChange}
-            placeholder="Ort"
-            originalValue={originalValues.kommun || ''}
-          />
-          <InfoRow
-            key="region"
-            label="Kommun"
-            value={region}
-            onChange={handleRegionChange}
-            placeholder="Kommun"
-            originalValue={originalValues.region || ''}
-          />
-          <InfoRow
-            key="fastighetsbeteckning"
-            label="Fastighet"
-            value={fastighetsbeteckning}
-            onChange={handleFastighetsbeteckningChange}
-            placeholder="Fastighetsbeteckning"
-            originalValue={originalValues.fastighetsbeteckning || ''}
-          />
+          {Platform.OS === 'web' ? (
+            <View style={styles.addressModeRow}>
+              <TouchableOpacity
+                style={[styles.addressModeTab, addressMode === 'manual' && styles.addressModeTabActive]}
+                onPress={() => setAddressMode('manual')}
+              >
+                <Ionicons name="create-outline" size={16} color={addressMode === 'manual' ? '#1976D2' : '#64748B'} />
+                <Text style={[styles.addressModeTabText, addressMode === 'manual' && styles.addressModeTabTextActive]}>Manuell inskrivning</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.addressModeTab, addressMode === 'map' && styles.addressModeTabActive]}
+                onPress={() => setAddressMode('map')}
+              >
+                <Ionicons name="map-outline" size={16} color={addressMode === 'map' ? '#1976D2' : '#64748B'} />
+                <Text style={[styles.addressModeTabText, addressMode === 'map' && styles.addressModeTabTextActive]}>Google Maps</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {(addressMode === 'manual' || Platform.OS !== 'web') ? (
+            <>
+              <InfoRow
+                key="adress"
+                label="Adress"
+                value={adress}
+                onChange={handleAdressChange}
+                placeholder="Gatuadress"
+                originalValue={originalValues.adress || ''}
+              />
+              <InfoRow
+                key="kommun"
+                label="Ort"
+                value={kommun}
+                onChange={handleKommunChange}
+                placeholder="Ort"
+                originalValue={originalValues.kommun || ''}
+              />
+              <InfoRow
+                key="region"
+                label="Kommun"
+                value={region}
+                onChange={handleRegionChange}
+                placeholder="Kommun"
+                originalValue={originalValues.region || ''}
+              />
+              <InfoRow
+                key="fastighetsbeteckning"
+                label="Fastighet"
+                value={fastighetsbeteckning}
+                onChange={handleFastighetsbeteckningChange}
+                placeholder="Fastighetsbeteckning"
+                originalValue={originalValues.fastighetsbeteckning || ''}
+              />
+            </>
+          ) : (
+            <ProjectAddressMap
+              latitude={latitude}
+              longitude={longitude}
+              onAddressFromMap={handleAddressFromMap}
+              height={280}
+              placeholder="Sök adress eller plats..."
+            />
+          )}
         </InfoCard>
           </View>
 
@@ -1296,6 +1650,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             originalValue={originalValues.sistaDagForFragor || ''}
             placeholder="YYYY-MM-DD"
             onOpen={() => openDatePicker('sistaDagForFragor')}
+            onClear={sistaDagForFragor ? () => requestClearDate('sistaDagForFragor') : undefined}
           />
           <DateRow
             key="anbudsinlamning"
@@ -1304,6 +1659,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             originalValue={originalValues.anbudsinlamning || ''}
             placeholder="YYYY-MM-DD"
             onOpen={() => openDatePicker('anbudsinlamning')}
+            onClear={anbudsinlamning ? () => requestClearDate('anbudsinlamning') : undefined}
           />
           <DateRow
             key="planeradByggstart"
@@ -1312,6 +1668,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             originalValue={originalValues.planeradByggstart || ''}
             placeholder="YYYY-MM-DD"
             onOpen={() => openDatePicker('planeradByggstart')}
+            onClear={planeradByggstart ? () => requestClearDate('planeradByggstart') : undefined}
           />
           <DateRow
             key="klartForBesiktning"
@@ -1320,6 +1677,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             originalValue={originalValues.klartForBesiktning || ''}
             placeholder="YYYY-MM-DD"
             onOpen={() => openDatePicker('klartForBesiktning')}
+            onClear={klartForBesiktning ? () => requestClearDate('klartForBesiktning') : undefined}
           />
         </InfoCard>
           </View>
@@ -1374,16 +1732,26 @@ export default function OversiktSummary({ projectId, companyId, project }) {
         onClose={() => setKontaktpersonSelectorVisible(false)}
         onSelect={(person) => {
           setKontaktperson(person);
-          // Auto-fill email and phone if available
           if (person && person.email) {
             setEpost(person.email);
           }
-          if (person && person.phone) {
-            setTelefon(person.phone);
+          if (person) {
+            const mobile = person.phone ? formatMobileDisplay(person.phone) : '';
+            const work = person.workPhone ? String(person.workPhone).trim() : '';
+            if (mobile && work) {
+              setTelefon(`Mobil: ${mobile} / Arbete: ${work}`);
+            } else if (mobile) {
+              setTelefon(`Mobil: ${mobile}`);
+            } else if (work) {
+              setTelefon(`Arbete: ${work}`);
+            } else {
+              setTelefon('');
+            }
           }
           setHasChangesKund(checkKundChanges());
         }}
         companyId={companyId}
+        filterCompanyId={linkedKundSupplierId || linkedKundCustomerId || null}
         value={kontaktperson}
         label="Välj kontaktperson"
       />
@@ -1394,6 +1762,31 @@ export default function OversiktSummary({ projectId, companyId, project }) {
         value={datePickerValue}
         onSelect={handleDatePicked}
         onClose={closeDatePicker}
+        onDelete={
+          datePickerField && datePickerValue
+            ? () => {
+                closeDatePicker();
+                requestClearDate(datePickerField);
+              }
+            : undefined
+        }
+      />
+
+      <ConfirmModal
+        visible={!!clearConfirmField}
+        message={
+          clearConfirmField
+            ? hasOutlookForField(clearConfirmField)
+              ? 'Du har skickat ut en Outlook-kallelse för detta datum. Glöm inte att radera eller avboka den i Outlook (t.ex. under Tidsplan och viktiga datum).\n\nVill du tömma datumet?'
+              : 'Vill du tömma detta datum?'
+            : ''
+        }
+        cancelLabel="Avbryt"
+        confirmLabel="Töm datum"
+        danger
+        onCancel={() => setClearConfirmField(null)}
+        onConfirm={performClearDate}
+        compact
       />
 
       {/* Info Tooltip Modal - Rendered after dropdown modals to appear on top */}
@@ -1522,15 +1915,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: '#e2e8f0',
     marginBottom: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
-    flex: 1, // Make cards equal height within their row
-    flexDirection: 'column', // Ensure column layout for flex to work
+    flex: 1,
+    minWidth: 0, // Allow card to shrink when panels are open
+    flexDirection: 'column',
     overflow: 'visible', // Allow dropdown to extend outside card
     position: 'relative',
   },
@@ -1545,7 +1939,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0'
+    borderBottomColor: '#e2e8f0'
   },
   cardTitleRow: {
     flexDirection: 'row',
@@ -1606,8 +2000,9 @@ const styles = StyleSheet.create({
   },
   cardContent: {
     padding: 16,
-    flex: 1, // Allow content to expand and fill available space
-    overflow: 'visible', // Allow dropdown to extend outside card content
+    flex: 1,
+    minWidth: 0, // Allow content to shrink so inputs stay within card
+    overflow: 'visible',
     position: 'relative',
   },
   infoRow: {
@@ -1634,11 +2029,13 @@ const styles = StyleSheet.create({
   },
   infoInput: {
     flex: 1,
+    minWidth: 0,
+    minHeight: 40,
     fontSize: 14,
     color: '#222',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 6,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
     padding: 8,
     backgroundColor: '#fff'
   },
@@ -1654,12 +2051,14 @@ const styles = StyleSheet.create({
   // Person selector styles
   personSelectorButton: {
     flex: 1,
+    minWidth: 0,
+    minHeight: 40,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 6,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
     padding: 10,
     backgroundColor: '#fff'
   },
@@ -1680,11 +2079,10 @@ const styles = StyleSheet.create({
   personInfo: {
     flex: 1,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 10
   },
   personIcon: {
-    marginTop: 2
   },
   personDetails: {
     flex: 1,
@@ -1711,46 +2109,74 @@ const styles = StyleSheet.create({
     color: '#999',
     flex: 1
   },
-  // Dropdown styles
+  addressModeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  addressModeTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+  },
+  addressModeTabActive: {
+    borderColor: '#1976D2',
+    backgroundColor: '#E3F2FD',
+  },
+  addressModeTabText: {
+    fontSize: 13,
+    color: '#64748B',
+  },
+  addressModeTabTextActive: {
+    color: '#1976D2',
+    fontWeight: '500',
+  },
+  // Dropdown styles – aligned with leftNavTheme/topbar (accent #2563EB, hover/active backgrounds)
   dropdownList: {
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderTopWidth: 0, // Remove top border to connect with input
-    borderRadius: 6,
+    borderColor: '#e2e8f0',
+    borderTopWidth: 0,
+    borderRadius: 8,
     borderTopLeftRadius: 0,
     borderTopRightRadius: 0,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.08,
     shadowRadius: 12,
-    elevation: 25,
-    maxHeight: 280, // Increased height for better visibility
-    overflow: 'scroll', // Make it scrollable
+    elevation: 8,
+    maxHeight: 280,
+    overflow: 'scroll',
     zIndex: 6001,
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
+      boxShadow: '0 4px 16px rgba(0, 0, 0, 0.08)',
       zIndex: 6001,
-      overflowY: 'auto', // Enable vertical scrolling on web
+      overflowY: 'auto',
       maxHeight: '280px',
     } : {}),
   },
   dropdownItem: {
     paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0'
+    borderBottomColor: '#f1f5f9',
   },
   dropdownItemSelected: {
-    backgroundColor: '#f5f5f5'
+    backgroundColor: '#EEF4FF',
   },
   dropdownItemText: {
     fontSize: 14,
-    color: '#222'
+    color: '#1e293b',
   },
   dropdownItemTextSelected: {
-    color: '#1976D2',
-    fontWeight: '600'
+    color: '#2563EB',
+    fontWeight: '600',
   },
   // Anteckningar styles
   anteckningarContainer: {
@@ -1762,8 +2188,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#222',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 6,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
     padding: 12,
     backgroundColor: '#fff',
     textAlignVertical: 'top',
@@ -1824,26 +2250,27 @@ InfoCard.displayName = 'InfoCard';
 
 // InfoRow component - defined at module level to prevent re-creation on every render
 // Completely uncontrolled - maintains its own state to prevent focus loss
-const InfoRow = ({ label, value, onChange, placeholder, multiline = false, originalValue = '' }) => {
-  // Initialize local state from prop, but don't update from prop while typing
-  const [localValue, setLocalValue] = React.useState(() => String(value || ''));
+// transformInput: optional (v) => formattedValue – e.g. for org.nr xxxxxx-xxxx; both display and onChange use transformed value
+const InfoRow = ({ label, value, onChange, placeholder, multiline = false, originalValue = '', transformInput, textColor }) => {
+  const initial = transformInput ? transformInput(String(value || '')) : String(value || '');
+  const [localValue, setLocalValue] = React.useState(() => initial);
   const isFocusedRef = React.useRef(false);
   const prevValueRef = React.useRef(value);
   
   // Only update local value if prop value changed externally (not from our onChange)
   React.useEffect(() => {
-    // If not focused and value prop changed, update local value
     if (!isFocusedRef.current && prevValueRef.current !== value) {
-      setLocalValue(String(value || ''));
+      const next = transformInput ? transformInput(String(value || '')) : String(value || '');
+      setLocalValue(next);
       prevValueRef.current = value;
     }
-  }, [value]);
+  }, [value, transformInput]);
   
   const handleChangeText = React.useCallback((text) => {
-    setLocalValue(text);
-    // Call parent onChange immediately
-    onChange(text);
-  }, [onChange]);
+    const next = transformInput ? transformInput(text) : text;
+    setLocalValue(next);
+    onChange(next);
+  }, [onChange, transformInput]);
   
   const handleFocus = React.useCallback(() => {
     isFocusedRef.current = true;
@@ -1867,7 +2294,7 @@ const InfoRow = ({ label, value, onChange, placeholder, multiline = false, origi
         onFocus={handleFocus}
         onBlur={handleBlur}
         placeholder={placeholder}
-        style={[styles.infoInput, multiline && styles.infoInputMultiline, hasChanged && styles.infoInputChanged]}
+        style={[styles.infoInput, multiline && styles.infoInputMultiline, hasChanged && styles.infoInputChanged, textColor ? { color: textColor } : null]}
         multiline={multiline}
         numberOfLines={multiline ? 3 : 1}
         autoCapitalize="none"
@@ -1878,30 +2305,144 @@ const InfoRow = ({ label, value, onChange, placeholder, multiline = false, origi
   );
 };
 
-// DateRow component - opens a calendar and stores ISO YYYY-MM-DD
-const DateRow = ({ label, value, placeholder, originalValue = '', onOpen }) => {
-  const displayValue = isValidIsoDate(value) ? String(value) : '';
-  const hasChanged = String(displayValue || '').trim() !== String(originalValue || '').trim();
+// TelefonRow - renders "Mobil:" / "Arbete:" labels in normal color and numbers in blue
+const TelefonRow = ({ label, value, onChange, placeholder, originalValue = '' }) => {
+  const initial = String(value || '');
+  const [localValue, setLocalValue] = React.useState(() => initial);
+  const [editing, setEditing] = React.useState(false);
+  const isFocusedRef = React.useRef(false);
+  const prevValueRef = React.useRef(value);
+  const inputRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!isFocusedRef.current && prevValueRef.current !== value) {
+      setLocalValue(String(value || ''));
+      prevValueRef.current = value;
+    }
+  }, [value]);
+
+  const handleChangeText = React.useCallback((text) => {
+    setLocalValue(text);
+    onChange(text);
+  }, [onChange]);
+
+  const handleFocus = React.useCallback(() => {
+    isFocusedRef.current = true;
+  }, []);
+
+  const handleBlur = React.useCallback(() => {
+    isFocusedRef.current = false;
+    prevValueRef.current = value;
+    setEditing(false);
+  }, [value]);
+
+  const originalString = String(originalValue || '');
+  const hasChanged = localValue.trim() !== originalString.trim();
+
+  const renderFormattedPhone = () => {
+    const raw = localValue.trim();
+    if (!raw) return <Text style={{ fontSize: 14, color: '#999' }}>{placeholder}</Text>;
+
+    const parts = raw.split('/').map(s => s.trim());
+    return (
+      <Text style={{ fontSize: 14, flexWrap: 'wrap' }}>
+        {parts.map((part, i) => {
+          const labelMatch = part.match(/^(Mobil:|Arbete:)\s*(.*)/i);
+          return (
+            <React.Fragment key={i}>
+              {i > 0 && <Text style={{ color: '#222' }}> / </Text>}
+              {labelMatch ? (
+                <>
+                  <Text style={{ color: '#222' }}>{labelMatch[1]} </Text>
+                  <Text style={{ color: '#1976D2' }}>{labelMatch[2]}</Text>
+                </>
+              ) : (
+                <Text style={{ color: '#1976D2' }}>{part}</Text>
+              )}
+            </React.Fragment>
+          );
+        })}
+      </Text>
+    );
+  };
 
   return (
     <View style={[styles.infoRow, hasChanged && styles.infoRowChanged]}>
       <Text style={styles.infoLabel}>{label}:</Text>
-      <View style={{ flex: 1, position: 'relative' }}>
+      {editing ? (
+        <TextInput
+          ref={inputRef}
+          value={localValue}
+          onChangeText={handleChangeText}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          placeholder={placeholder}
+          style={[styles.infoInput, hasChanged && styles.infoInputChanged]}
+          autoCapitalize="none"
+          autoCorrect={false}
+          blurOnSubmit={false}
+        />
+      ) : (
+        <Pressable
+          style={[styles.infoInput, hasChanged && styles.infoInputChanged, { justifyContent: 'center' }]}
+          onPress={() => {
+            setEditing(true);
+            setTimeout(() => inputRef.current?.focus(), 50);
+          }}
+        >
+          {renderFormattedPhone()}
+        </Pressable>
+      )}
+    </View>
+  );
+};
+
+// DateRow component - opens a calendar and stores ISO YYYY-MM-DD; optional onClear shows kryss to töm datum
+const DateRow = ({ label, value, placeholder, originalValue = '', onOpen, onClear }) => {
+  const displayValue = isValidIsoDate(value) ? String(value) : '';
+  const hasChanged = String(displayValue || '').trim() !== String(originalValue || '').trim();
+  const showClear = onClear && displayValue;
+
+  return (
+    <View style={[styles.infoRow, hasChanged && styles.infoRowChanged]}>
+      <Text style={styles.infoLabel}>{label}:</Text>
+      <View style={{ flex: 1, minWidth: 0, position: 'relative' }}>
         <TouchableOpacity
           onPress={onOpen}
           activeOpacity={0.8}
-          style={{ flex: 1 }}
+          style={{ flex: 1, minWidth: 0 }}
         >
           <TextInput
             value={displayValue}
             placeholder={placeholder}
             editable={false}
             pointerEvents="none"
-            style={[styles.infoInput, hasChanged && styles.infoInputChanged, { paddingRight: 40 }]}
+            style={[styles.infoInput, hasChanged && styles.infoInputChanged, { paddingRight: showClear ? 76 : 40 }]}
             autoCapitalize="none"
             autoCorrect={false}
           />
         </TouchableOpacity>
+        {showClear ? (
+          <TouchableOpacity
+            onPress={(e) => {
+              e?.stopPropagation?.();
+              onClear();
+            }}
+            activeOpacity={0.7}
+            style={{
+              position: 'absolute',
+              right: 40,
+              top: 0,
+              bottom: 0,
+              justifyContent: 'center',
+              alignItems: 'center',
+              paddingHorizontal: 6,
+              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+            }}
+          >
+            <Ionicons name="close-circle-outline" size={20} color="#64748B" />
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity
           onPress={onOpen}
           activeOpacity={0.7}
@@ -2011,12 +2552,6 @@ const PersonRow = React.memo(({ label, person, onSelect, onClear, placeholder, h
             />
             <View style={styles.personDetails}>
               <Text style={styles.personName}>{person.name}</Text>
-              {person.phone && (
-                <Text style={styles.personPhone}>{person.phone}</Text>
-              )}
-              {person.email && (
-                <Text style={styles.personEmail}>{person.email}</Text>
-              )}
             </View>
           </View>
         ) : (
@@ -2115,7 +2650,7 @@ const SelectRow = ({ label, value, options, onSelect, placeholder, originalValue
       ]}
     >
       <Text style={styles.infoLabel}>{label}:</Text>
-      <View style={{ flex: 1, position: 'relative', overflow: 'visible' }}>
+      <View style={{ flex: 1, minWidth: 0, position: 'relative', overflow: 'visible' }}>
         {selectedColor && !!displayValue ? (
           <View
             pointerEvents="none"

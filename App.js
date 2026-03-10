@@ -2,26 +2,50 @@ import { Inter_400Regular, Inter_600SemiBold, Inter_700Bold, useFonts } from '@e
 import { Ionicons } from '@expo/vector-icons';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import React from 'react';
+import React, { useContext, useEffect } from 'react';
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
+import { applyGlobalBodyBackground } from './constants/backgroundTheme';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 // AppLoading borttagen, ersätts med View och Text
 
 import ErrorBoundary from './components/ErrorBoundary';
 import GlobalPhaseToolbar from './components/GlobalPhaseToolbar';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from './components/HeaderComponents';
+import { GLOBAL_HEADER_HEIGHT } from './components/common/layoutConstants';
+import { ICON_RAIL } from './constants/iconRailTheme';
+import { BackgroundTasksIndicator } from './components/common/BackgroundTasksIndicator';
+import { AdminModalContext, AdminModalProvider } from './components/common/AdminModalContext';
 import { SystemModalProvider } from './components/common/Modals/SystemModalProvider';
 import { UploadManagerProvider } from './components/common/uploads/UploadManagerContext';
+import { BackgroundTasksProvider } from './contexts/BackgroundTasksContext';
+// Ladda authService tidigt så att cacheOauthCodeFromUrl körs och PENDING_SYNC_PICKER_KEY sätts vid tenant-återkomst (bryter loop)
+import './services/azure/authService';
 
 // Importera skärmar
 import AdminAuditLog from './Screens/AdminAuditLog';
+import AIPromptsScreen from './Screens/AIPromptsScreen';
 import CameraCapture from './Screens/CameraCapture';
 import ContactRegistryScreen from './Screens/ContactRegistryScreen';
 import ControlDetails from './Screens/ControlDetails';
 import ControlForm from './Screens/ControlForm';
 import HomeScreen from './Screens/HomeScreen';
 import LoginScreen from './Screens/LoginScreen';
-import ManageCompany from './Screens/ManageCompany';
+// ManageCompany fasas ut: redirect till Företagsinställningar-modalen
+function ManageCompanyRedirect({ navigation, route }) {
+  const { openCompanyModal, openCreateCompanyModal } = useContext(AdminModalContext) || {};
+  useEffect(() => {
+    const params = route?.params || {};
+    if (params.createNew && typeof openCreateCompanyModal === 'function') {
+      openCreateCompanyModal();
+    } else {
+      const companyId = params.companyId != null ? String(params.companyId).trim() : '';
+      const focus = params.focus || undefined;
+      if (typeof openCompanyModal === 'function') openCompanyModal(companyId, focus);
+    }
+    if (navigation?.goBack) navigation.goBack();
+  }, [navigation, route?.params, openCompanyModal, openCreateCompanyModal]);
+  return null;
+}
 import ManageControlTypes from './Screens/ManageControlTypes';
 import ManageSharePointNavigation from './Screens/ManageSharePointNavigation';
 import ManageUsers from './Screens/ManageUsers';
@@ -149,8 +173,9 @@ const WebGlobalBreadcrumb = ({ navigation, route, titleFallback = '' }) => {
   const fallbackTitle = String(titleFallback || '').trim() || (
     currentRouteName === 'ManageCompany' ? 'Företag'
       : currentRouteName === 'ManageUsers' ? 'Användare'
-        : currentRouteName === 'ManageControlTypes' ? 'Kontrolltyper'
-          : currentRouteName === 'ContactRegistry' ? 'Kontaktregister'
+      : currentRouteName === 'ManageControlTypes' ? 'Kontrolltyper'
+        : currentRouteName === 'ContactRegistry' ? 'Kontaktregister'
+          : currentRouteName === 'AIPrompts' ? 'AI-analys'
           : currentRouteName === 'AdminAuditLog' ? 'Adminlogg'
             : currentRouteName === 'TemplateControlScreen' ? 'Kontroll'
               : currentRouteName === 'ControlForm' ? 'Kontroll'
@@ -270,17 +295,48 @@ function ensureWebTitle() {
 export default function App() {
   const [currentRoute, setCurrentRoute] = React.useState(null);
   const navigationRef = React.useRef(null);
-  
-  let [fontsLoaded] = useFonts({
+  const [fontTimeout, setFontTimeout] = React.useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') applyGlobalBodyBackground();
+  }, []);
+
+  // Vid återkomst från Microsoft (tenant-inloggning för SharePoint-synk): gör endast tenant-exchange, starta ALDRIG huvudapp-inloggning (bryter loop)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const hash = (window.location.hash || '').slice(1);
+    const search = (window.location.search || '').slice(1);
+    const params = new URLSearchParams(hash || search);
+    const code = params.get('code');
+    const state = params.get('state');
+    if (code && state && String(state).startsWith('tenant_')) {
+      import('./services/azure/authService').then(({ processTenantReturnFromUrl }) => {
+        processTenantReturnFromUrl().catch(() => {});
+      });
+    }
+  }, []);
+
+  // På web: visa appen även om typsnitt hänger sig (useFonts kan aldrig resolva)
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const t = setTimeout(() => setFontTimeout(true), 2000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_700Bold,
     Inter_600SemiBold,
     ...(Ionicons?.font || {}),
   });
-  if (!fontsLoaded) {
+
+  const showApp = fontsLoaded || fontError || (Platform.OS === 'web' && fontTimeout);
+  if (!showApp) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
-        <Text style={{ fontSize: 18, color: '#222' }}>Laddar typsnitt...</Text>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f1f5f9' }}>
+        <Text style={{ fontSize: 18, color: '#0f172a', fontFamily: Platform.OS === 'web' ? 'system-ui, sans-serif' : undefined }}>
+          Laddar typsnitt...
+        </Text>
       </View>
     );
   }
@@ -297,7 +353,12 @@ export default function App() {
   const showToolbar = false; // Disabled - phase selector is now in left sidebar
   // const showToolbar = currentRoute && currentRoute !== 'Login';
   
+  const rootStyle = {
+    flex: 1,
+    ...(Platform.OS === 'web' ? { minHeight: '100vh', width: '100%' } : {}),
+  };
   return (
+    <View style={rootStyle}>
     <ErrorBoundary>
       <GestureHandlerRootView style={{ flex: 1 }}>
         {showToolbar && (
@@ -306,8 +367,10 @@ export default function App() {
             route={{ name: currentRoute }}
           />
         )}
-        <SystemModalProvider>
+        <AdminModalProvider navigationRef={navigationRef}>
+          <SystemModalProvider>
           <UploadManagerProvider>
+            <BackgroundTasksProvider>
             <View style={{ flex: 1, paddingTop: showToolbar && Platform.OS === 'web' ? 48 : 0 }}>
               <NavigationContainer
                 ref={navigationRef}
@@ -323,7 +386,7 @@ export default function App() {
               const dkExtraNudge = isWeb ? -10 : 0;
               return ({
                 // Clean base header for all screens; detailed layout handled via container styles
-                headerStyle: { backgroundColor: '#FFFFFF', height: 96 },
+                headerStyle: { backgroundColor: '#FFFFFF', height: GLOBAL_HEADER_HEIGHT },
                 headerTintColor: '#000',
                 headerTitleStyle: { fontWeight: 'bold', color: '#000', fontFamily: 'Inter_700Bold' },
                 headerTitleAlign: 'center',
@@ -376,19 +439,19 @@ export default function App() {
                 const dkExtraNudge = isWeb ? -10 : 0;
                 return ({
                   // Keep header clean on native; extra layout is handled via container styles
-                  headerStyle: { backgroundColor: '#FFFFFF', height: 96 },
+                  headerStyle: {
+                    backgroundColor: '#FFFFFF',
+                    height: GLOBAL_HEADER_HEIGHT,
+                    ...(isWeb ? { borderBottomWidth: 3, borderBottomColor: ICON_RAIL.bg } : {}),
+                  },
                 headerTitleAlign: 'center',
                 headerTitleContainerStyle: isWeb
                   ? { flex: 1, paddingLeft: 300, paddingRight: 300 }
                   : { flex: 1, paddingLeft: 0, paddingRight: 0 },
-                // Web: show search + breadcrumb via global screenOptions; native uses centered logo.
+                // Web: sök ligger i vänsterpanelen; header center tom. Native: centrerad logo.
                 headerTitle: () => (
                   isWeb
-                    ? (
-                      <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-                        <HomeHeaderSearch navigation={navigation} route={route} />
-                      </View>
-                    )
+                    ? <View style={{ flex: 1, minWidth: 0 }} />
                     : (
                       <View style={{ marginBottom: 4, marginLeft: -28 }}>
                         <DigitalKontrollHeaderLogo />
@@ -471,7 +534,7 @@ export default function App() {
               });
             }} />
             <Stack.Screen name="ProjectDetails" component={ProjectDetails} options={{ title: 'Projekt' }} />
-            <Stack.Screen name="ManageCompany" component={ManageCompany} options={({ navigation }) => {
+            <Stack.Screen name="ManageCompany" component={ManageCompanyRedirect} options={({ navigation }) => {
               const isWeb = Platform.OS === 'web';
               if (isWeb) {
                 return ({
@@ -576,6 +639,31 @@ export default function App() {
 
               return ({
                 title: 'Kontrolltyper',
+                headerBackTitleVisible: false,
+                headerBackTitle: '',
+                headerLeft: () => (
+                  <TouchableOpacity
+                    onPress={() => navigation.goBack()}
+                    accessibilityLabel="Tillbaka"
+                    hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                    style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+                  >
+                    <Ionicons name="chevron-back" size={30} color="#000" />
+                  </TouchableOpacity>
+                ),
+              });
+            }} />
+            <Stack.Screen name="AIPrompts" component={AIPromptsScreen} options={({ navigation }) => {
+              const isWeb = Platform.OS === 'web';
+              if (isWeb) {
+                return ({
+                  title: 'AI-analys',
+                  headerBackTitleVisible: false,
+                  headerBackTitle: '',
+                });
+              }
+              return ({
+                title: 'AI-analys',
                 headerBackTitleVisible: false,
                 headerBackTitle: '',
                 headerLeft: () => (
@@ -699,10 +787,14 @@ export default function App() {
             <Stack.Screen name="CameraCapture" component={CameraCapture} options={{ headerShown: false }} />
               </Stack.Navigator>
               </NavigationContainer>
+              <BackgroundTasksIndicator />
             </View>
+            </BackgroundTasksProvider>
           </UploadManagerProvider>
         </SystemModalProvider>
+        </AdminModalProvider>
       </GestureHandlerRootView>
     </ErrorBoundary>
+    </View>
   );
 }

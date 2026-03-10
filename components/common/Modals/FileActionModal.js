@@ -1,26 +1,33 @@
 import { useEffect, useMemo } from 'react';
 import { Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
-const POS = Platform.OS === 'web' ? 'fixed' : 'absolute';
+import { ICON_RAIL } from '../../../constants/iconRailTheme';
 
+const POS = Platform.OS === 'web' ? 'fixed' : 'absolute';
+const RAIL_BG = ICON_RAIL?.bg ?? '#0f1b2d';
+
+/** Golden rule: 12px rounded, soft shadows, Inter, subtle hover, SaaS 2026 */
 export const FILE_ACTION_MODAL_STYLES = StyleSheet.create({
   title: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#111',
-    lineHeight: 18,
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1e293b',
+    lineHeight: 22,
+    fontFamily: Platform.select({ web: 'Inter, system-ui, sans-serif', default: undefined }),
   },
   description: {
     marginTop: 6,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '400',
     color: '#64748b',
-    lineHeight: 16,
+    lineHeight: 18,
+    fontFamily: Platform.select({ web: 'Inter, system-ui, sans-serif', default: undefined }),
   },
   label: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '400',
-    color: '#111',
+    color: '#334155',
+    fontFamily: Platform.select({ web: 'Inter, system-ui, sans-serif', default: undefined }),
   },
 });
 
@@ -28,11 +35,16 @@ export default function FileActionModal({
   visible,
   title,
   description,
+  /** Golden rule: mörk banner. bannerTitle = stor text, bannerSubtitle = liten text (valfritt) */
+  bannerTitle = null,
+  bannerSubtitle = null,
   onClose,
 
   primaryLabel,
   onPrimary,
   primaryDisabled = false,
+  /** 'danger' = red, 'dark' = mörk som rail (Byt namn), 'default' = blue */
+  primaryVariant = 'default',
 
   secondaryLabel = 'Avbryt',
 
@@ -127,35 +139,47 @@ export default function FileActionModal({
             resolvedMaxHeight ? { maxHeight: resolvedMaxHeight } : null,
           ]}
         >
-          {!!title && (
-            <Text style={FILE_ACTION_MODAL_STYLES.title} numberOfLines={2}>
-              {String(title)}
-            </Text>
-          )}
-          {!!description && (
-            <Text style={FILE_ACTION_MODAL_STYLES.description} numberOfLines={3}>
-              {String(description)}
-            </Text>
+          {bannerTitle ? (
+            <View style={[styles.banner, { backgroundColor: RAIL_BG }]}>
+              <Text style={styles.bannerTitle}>
+                {String(bannerTitle)}
+                {bannerSubtitle ? (
+                  <Text style={styles.bannerSubtitleInline}> {String(bannerSubtitle)}</Text>
+                ) : null}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.headerArea}>
+              {!!title && (
+                <Text style={FILE_ACTION_MODAL_STYLES.title} numberOfLines={2}>
+                  {String(title)}
+                </Text>
+              )}
+              {!!description && (
+                <Text style={FILE_ACTION_MODAL_STYLES.description} numberOfLines={3}>
+                  {String(description)}
+                </Text>
+              )}
+            </View>
           )}
 
-          <View style={styles.body}>{children}</View>
+          <View style={[styles.body, bannerTitle ? styles.bodyWithBanner : null]}>{children}</View>
 
           <View style={styles.actions}>
             <Pressable
               onPress={() => {
                 if (typeof onClose === 'function') onClose();
               }}
-              style={({ hovered, pressed }) => ({
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                borderRadius: 10,
-                borderWidth: 1,
-                borderColor: '#E2E8F0',
-                backgroundColor: hovered || pressed ? '#F8FAFC' : '#fff',
-                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-              })}
+              style={(state) => {
+                const h = (state && state.hovered) === true;
+                const p = (state && state.pressed) === true;
+                return [
+                  styles.btnSecondary,
+                  (h || p) && styles.btnSecondaryHover,
+                ];
+              }}
             >
-              <Text style={{ fontSize: 12, fontWeight: '600', color: '#111' }}>{secondaryLabel}</Text>
+              <Text style={styles.btnSecondaryText}>{secondaryLabel}</Text>
             </Pressable>
 
             {primaryLabel && typeof onPrimary === 'function' ? (
@@ -164,15 +188,26 @@ export default function FileActionModal({
                   if (!primaryDisabled) onPrimary();
                 }}
                 disabled={primaryDisabled}
-                style={({ hovered, pressed }) => ({
-                  paddingVertical: 10,
-                  paddingHorizontal: 14,
-                  borderRadius: 10,
-                  backgroundColor: primaryDisabled ? '#94A3B8' : (hovered || pressed ? '#155FB5' : '#1976D2'),
-                  ...(Platform.OS === 'web' ? { cursor: primaryDisabled ? 'not-allowed' : 'pointer' } : {}),
-                })}
+                style={(state) => {
+                  const h = (state && state.hovered) === true;
+                  const p = (state && state.pressed) === true;
+                  const isDanger = primaryVariant === 'danger';
+                  const isDark = primaryVariant === 'dark';
+                  const baseBg = primaryDisabled
+                    ? '#cbd5e1'
+                    : isDanger
+                      ? (h || p ? '#b91c1c' : '#dc2626')
+                      : isDark
+                        ? (h || p ? '#1a2742' : RAIL_BG)
+                        : (h || p ? '#1d4ed8' : '#2563eb');
+                  return [
+                    styles.btnPrimary,
+                    { backgroundColor: baseBg },
+                    Platform.OS === 'web' && { cursor: primaryDisabled ? 'not-allowed' : 'pointer' },
+                  ];
+                }}
               >
-                <Text style={{ fontSize: 12, fontWeight: '600', color: '#fff' }}>{primaryLabel}</Text>
+                <Text style={styles.btnPrimaryText}>{primaryLabel}</Text>
               </Pressable>
             ) : null}
           </View>
@@ -190,10 +225,10 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     zIndex: 9999999,
-    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    backgroundColor: 'rgba(15, 23, 42, 0.35)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 18,
+    padding: 24,
   },
   dismiss: {
     position: 'absolute',
@@ -206,18 +241,85 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: '#fff',
     borderRadius: 14,
+    overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#E6E8EC',
-    padding: 24,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 12px 32px rgba(0,0,0,0.20)' } : { elevation: 6 }),
+    borderColor: 'rgba(226, 232, 240, 0.9)',
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0 8px 32px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04)' }
+      : { elevation: 12 }),
+  },
+  headerArea: {
+    paddingTop: 24,
+    paddingHorizontal: 24,
+  },
+  banner: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+  },
+  bannerTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+    fontFamily: Platform.select({ web: 'Inter, system-ui, sans-serif', default: undefined }),
+  },
+  bannerSubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '400',
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontFamily: Platform.select({ web: 'Inter, system-ui, sans-serif', default: undefined }),
+  },
+  bannerSubtitleInline: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontFamily: Platform.select({ web: 'Inter, system-ui, sans-serif', default: undefined }),
   },
   body: {
-    marginTop: 14,
+    marginTop: 16,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+  },
+  bodyWithBanner: {
+    marginTop: 20,
   },
   actions: {
-    marginTop: 18,
+    marginTop: 20,
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    gap: 10,
+    gap: 12,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+  },
+  btnSecondary: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#fff',
+    ...(Platform.OS === 'web' ? { transition: 'background-color 150ms ease, border-color 150ms ease' } : {}),
+  },
+  btnSecondaryHover: {
+    backgroundColor: '#f8fafc',
+    borderColor: '#e2e8f0',
+  },
+  btnSecondaryText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+    fontFamily: Platform.select({ web: 'Inter, system-ui, sans-serif', default: undefined }),
+  },
+  btnPrimary: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 150ms ease' } : {}),
+  },
+  btnPrimaryText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+    fontFamily: Platform.select({ web: 'Inter, system-ui, sans-serif', default: undefined }),
   },
 });

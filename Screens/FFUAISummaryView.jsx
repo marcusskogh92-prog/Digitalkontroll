@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ConfirmModal } from '../components/common/Modals';
-import { functionsClient, subscribeLatestProjectFFUAnalysis } from '../components/firebase';
+import { fetchCompanyProject, functionsClient, setFFUAnalysisCancelRequested, subscribeLatestProjectFFUAnalysis } from '../components/firebase';
+import { emitProjectUpdated } from '../components/projectBus';
+import { useBackgroundTasks } from '../contexts/BackgroundTasksContext';
 
 function safeText(v) {
   if (v === null || v === undefined) return '';
@@ -54,11 +56,23 @@ function SectionLabel({ children }) {
   );
 }
 
+const TASK_ID_AI_FFU = 'ai-analysis-ffu';
+
 export default function FFUAISummaryView({ projectId, companyId, project }) {
   const pid = safeText(projectId);
   const cid = safeText(companyId);
+  const { addTask, removeTask } = useBackgroundTasks();
 
-  void project;
+  const projectHasPath = Boolean(
+    project && (
+      safeText(project.rootFolderPath) ||
+      safeText(project.sharePointRootPath) ||
+      safeText(project.rootPath) ||
+      safeText(project.sharePointPath) ||
+      safeText(project.path) ||
+      safeText(project.projectPath)
+    )
+  );
 
   // Single source of truth: render ONLY from Firestore snapshot.
   const [analysisDoc, setAnalysisDoc] = useState(null);
@@ -66,14 +80,22 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
   const [snapshotExists, setSnapshotExists] = useState(false);
 
   const [runError, setRunError] = useState('');
-  const [analysisRunning, setAnalysisRunning] = useState(false);
+  const [analysisTriggered, setAnalysisTriggered] = useState(false);
+  const [cancelRequested, setCancelRequested] = useState(false);
 
   const [rerunConfirm, setRerunConfirm] = useState({ visible: false, busy: false, error: '' });
   const subKeyRef = useRef('');
+  const aiAnalysisTaskTimeoutRef = useRef(null);
+  const wasAnalyzingRef = useRef(false);
 
   const hasSavedAnalysis = snapshotExists;
 
   const effectiveStatus = safeText(analysisDoc?.status);
+  const isAnalyzing = effectiveStatus === 'analyzing' || analysisTriggered;
+  const docCancelRequested = analysisDoc?.cancelRequested === true;
+  const cancelRequestedOrDoc = cancelRequested || docCancelRequested;
+  const progress = analysisDoc?.progress != null && Number.isFinite(Number(analysisDoc.progress)) ? Math.max(0, Math.min(100, Number(analysisDoc.progress))) : null;
+  const progressStep = safeText(analysisDoc?.progressStep);
   const meta = analysisDoc?.meta && typeof analysisDoc.meta === 'object' ? analysisDoc.meta : null;
   const analyzedAt = analysisDoc?.analyzedAt || null;
   const model = safeText(analysisDoc?.model);
@@ -93,23 +115,31 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
     }
   }, [analyzedAt]);
 
-  const statusLabel = effectiveStatus === 'analyzing'
-    ? 'Analyseras'
-    : effectiveStatus === 'error'
-      ? 'Misslyckad'
-      : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasSavedAnalysis)
-        ? (effectiveStatus === 'partial' ? 'Analyserad*' : 'Analyserad')
-        : 'Ej analyserad';
+  const statusLabel = cancelRequestedOrDoc
+    ? 'Avbruten'
+    : isAnalyzing
+      ? 'Analyseras'
+      : effectiveStatus === 'cancelled'
+        ? 'Avbruten'
+        : effectiveStatus === 'error'
+          ? 'Misslyckad'
+          : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasSavedAnalysis)
+            ? (effectiveStatus === 'partial' ? 'Analyserad*' : 'Analyserad')
+            : 'Ej analyserad';
 
-  const statusTone = effectiveStatus === 'analyzing'
-    ? 'warning'
-    : effectiveStatus === 'error'
+  const statusTone = cancelRequestedOrDoc || effectiveStatus === 'cancelled'
+    ? 'neutral'
+    : isAnalyzing
       ? 'warning'
-      : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasSavedAnalysis)
-        ? 'success'
-        : 'neutral';
+      : effectiveStatus === 'error'
+        ? 'warning'
+        : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasSavedAnalysis)
+          ? 'success'
+          : 'neutral';
 
-  const canRun = Boolean(cid && pid && !analysisRunning && !snapshotLoading && !rerunConfirm?.busy);
+  const showAnalyzingBlock = isAnalyzing && !cancelRequestedOrDoc;
+
+  const canRun = Boolean(cid && pid && !snapshotLoading && !rerunConfirm?.busy && (!isAnalyzing || cancelRequestedOrDoc));
 
   useEffect(() => {
     if (!cid || !pid) {
@@ -125,11 +155,34 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
     const unsubscribe = subscribeLatestProjectFFUAnalysis(cid, pid, {
       onNext: (data, snap) => {
         if (subKeyRef.current !== subKey) return;
+        const status = data?.status;
+        if (status === 'analyzing') {
+          wasAnalyzingRef.current = true;
+        }
+        if (status && status !== 'analyzing') {
+          if (aiAnalysisTaskTimeoutRef.current) {
+            clearTimeout(aiAnalysisTaskTimeoutRef.current);
+            aiAnalysisTaskTimeoutRef.current = null;
+          }
+          removeTask(TASK_ID_AI_FFU);
+        }
         console.log('[FFU] Snapshot loaded', snap?.exists?.() === true, snap?.data?.());
         const exists = !!(snap && typeof snap.exists === 'function' && snap.exists());
         setSnapshotExists(exists);
         setAnalysisDoc(exists ? (data || {}) : null);
         setSnapshotLoading(false);
+        setAnalysisTriggered((prev) => (prev ? false : prev));
+        if (safeText(data?.status) === 'cancelled' || (safeText(data?.status) !== 'analyzing' && safeText(data?.status) !== '')) {
+          setCancelRequested(false);
+        }
+        if (status === 'success' && cid && pid && wasAnalyzingRef.current) {
+          wasAnalyzingRef.current = false;
+          fetchCompanyProject(cid, pid).then((updated) => {
+            if (updated) emitProjectUpdated(updated);
+          }).catch(() => {});
+        } else if (status && status !== 'analyzing') {
+          wasAnalyzingRef.current = false;
+        }
       },
       onError: (err) => {
         if (subKeyRef.current !== subKey) return;
@@ -148,30 +201,40 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
         unsubscribe?.();
       } catch (_e) {}
     };
-  }, [cid, pid]);
+  }, [cid, pid, removeTask]);
 
-  const runAnalysisAndPersist = useCallback(async () => {
-    if (!canRun) return;
-    if (!cid || !pid) return;
+  const runAnalysisAndPersist = useCallback(() => {
+    if (!canRun) return Promise.resolve();
+    if (!cid || !pid) return Promise.resolve();
 
-    setAnalysisRunning(true);
     setRunError('');
+    setAnalysisTriggered(true);
+    addTask(TASK_ID_AI_FFU, 'Kör AI-analys', 'Förfrågningsunderlag');
+    aiAnalysisTaskTimeoutRef.current = setTimeout(() => {
+      aiAnalysisTaskTimeoutRef.current = null;
+      removeTask(TASK_ID_AI_FFU);
+    }, 120000);
 
-    try {
-      console.log('[FFU] Analysis started', { companyId: cid, projectId: pid });
-      const analyzeFFU = httpsCallable(functionsClient, 'analyzeFFUFromFiles');
-      const res = await analyzeFFU({ companyId: cid, projectId: pid });
-      const data = res?.data || {};
-      console.log('[FFU] Analysis saved', { companyId: cid, projectId: pid, status: safeText(data?.status) || null });
-    } catch (e) {
-      console.error('❌ analyzeFFUFromFiles failed:', e);
+    console.log('[FFU] Analysis started in background', { companyId: cid, projectId: pid });
+    const analyzeFFU = httpsCallable(functionsClient, 'analyzeFFUFromFiles');
+    return analyzeFFU({ companyId: cid, projectId: pid }).catch((e) => {
+      if (aiAnalysisTaskTimeoutRef.current) {
+        clearTimeout(aiAnalysisTaskTimeoutRef.current);
+        aiAnalysisTaskTimeoutRef.current = null;
+      }
+      removeTask(TASK_ID_AI_FFU);
+      const code = String(e?.code || '').trim();
       const msg = String(e?.details || e?.message || e?.code || '').trim();
-      setRunError(msg || 'Kunde inte köra AI-analys. Försök igen.');
-      throw e;
-    } finally {
-      setAnalysisRunning(false);
-    }
-  }, [canRun, cid, pid]);
+      const isTimeout = code.includes('deadline') || code.includes('timeout') || msg.toLowerCase().includes('timeout');
+      if (isTimeout) {
+        console.log('[FFU] Client timeout – analysen fortsätter i bakgrunden', { companyId: cid, projectId: pid });
+      } else {
+        console.error('❌ analyzeFFUFromFiles failed to start:', e);
+        setAnalysisTriggered(false);
+        setRunError(msg || 'Kunde inte starta AI-analys. Försök igen.');
+      }
+    });
+  }, [canRun, cid, pid, addTask, removeTask]);
 
   const onRunAnalysis = useCallback(() => {
     if (!canRun) return;
@@ -183,17 +246,26 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
     setRerunConfirm({ visible: true, busy: false, error: '' });
   }, [canRun, cid, hasSavedAnalysis, pid, runAnalysisAndPersist]);
 
-  const onConfirmRerun = useCallback(async () => {
+  const onConfirmRerun = useCallback(() => {
     if (!canRun) return;
-    setRerunConfirm((prev) => ({ ...prev, busy: true, error: '' }));
-    try {
-      await runAnalysisAndPersist();
-      setRerunConfirm({ visible: false, busy: false, error: '' });
-    } catch (e) {
+    setRerunConfirm({ visible: false, busy: false, error: '' });
+    runAnalysisAndPersist().catch((e) => {
       const msg = String(e?.message || e?.details || e?.code || e || '').trim();
-      setRerunConfirm((prev) => ({ ...prev, busy: false, error: msg || 'Kunde inte uppdatera analysen.' }));
-    }
+      setRunError(msg || 'Kunde inte uppdatera analysen.');
+    });
   }, [canRun, runAnalysisAndPersist]);
+
+  const onCancelAnalysis = useCallback(() => {
+    if (!cid || !pid) return;
+    setCancelRequested(true);
+    if (aiAnalysisTaskTimeoutRef.current) {
+      clearTimeout(aiAnalysisTaskTimeoutRef.current);
+      aiAnalysisTaskTimeoutRef.current = null;
+    }
+    removeTask(TASK_ID_AI_FFU);
+    setAnalysisTriggered(false);
+    setFFUAnalysisCancelRequested(cid, pid).catch(() => {});
+  }, [cid, pid, removeTask]);
 
   const summaryText = safeText(analysisDoc?.summary);
   const reqObj = analysisDoc?.requirements && typeof analysisDoc.requirements === 'object' ? analysisDoc.requirements : null;
@@ -239,6 +311,17 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
           </Text>
         ) : null}
 
+        {!projectHasPath && pid ? (
+          <View style={{ marginTop: 10, padding: 12, backgroundColor: '#FFF8E1', borderRadius: 8, borderWidth: 1, borderColor: '#FFE7A3' }}>
+            <Text style={[styles.hintText, { color: '#7A4F00', fontWeight: '600', marginBottom: 4 }]}>
+              Projektet har ingen SharePoint-lagringsplats kopplad
+            </Text>
+            <Text style={[styles.hintText, { color: '#92400e', marginLeft: 0 }]}>
+              Gå till Kalkylskede → högerklick på projektet i sidomenyn → Ändra. Välj lagringsplats (SharePoint-mapp) och spara. Därefter fungerar AI-analysen.
+            </Text>
+          </View>
+        ) : null}
+
         {/* Zon 2 – Åtgärd / Trigger */}
         <View style={styles.actionZone}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -260,18 +343,51 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
                 <Text style={styles.hintText}>Laddar sparad analys…</Text>
               </View>
             ) : null}
-            {analysisRunning ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <ActivityIndicator size="small" color="#64748b" />
-                <Text style={styles.hintText}>AI analyserar förfrågningsunderlaget…</Text>
+            {showAnalyzingBlock ? (
+              <View style={styles.analyzingBlock}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                  <ActivityIndicator size="small" color="#64748b" />
+                  <Text style={styles.hintText}>
+                    {progress != null ? `${progress}% – ${progressStep || 'Analyserar…'}` : 'AI analyserar förfrågningsunderlaget i bakgrunden…'}
+                  </Text>
+                </View>
+                {progress != null ? (
+                  <View style={styles.progressBarTrack}>
+                    <View style={[styles.progressBarFill, { width: `${progress}%` }]} />
+                  </View>
+                ) : (
+                  <Text style={[styles.hintText, { marginLeft: 0, fontStyle: 'italic' }]}>
+                    Procent visas när servern svarar. Saknas det – kör om: firebase deploy --only functions
+                  </Text>
+                )}
+                <Text style={[styles.hintText, { marginLeft: 0 }]}>Du kan byta sektion – analysen fortsätter.</Text>
+                <Pressable
+                  onPress={onCancelAnalysis}
+                  style={({ pressed }) => [styles.cancelButton, pressed ? { opacity: 0.8 } : null]}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.cancelButtonText}>Avbryt analys</Text>
+                </Pressable>
               </View>
+            ) : null}
+            {cancelRequestedOrDoc && (isAnalyzing || effectiveStatus === 'analyzing') ? (
+              <Text style={[styles.hintText, { marginLeft: 0, marginTop: 8 }]}>
+                Avbryt begärd. Analysen stoppar när backend hinner – du kan köra en ny analys nedan när du vill.
+              </Text>
             ) : null}
           </View>
 
-          {runError ? (
-            <Text style={[styles.hintText, { color: '#7A4F00' }]} numberOfLines={4}>
-              {runError}
-            </Text>
+          {(runError || (effectiveStatus === 'error' && safeText(analysisDoc?.errorMessage))) ? (
+            <View style={{ marginTop: 4 }}>
+              <Text style={[styles.hintText, { color: '#7A4F00' }]} numberOfLines={6}>
+                {runError || safeText(analysisDoc?.errorMessage)}
+              </Text>
+              {(runError || analysisDoc?.errorMessage || '').toLowerCase().includes('sharepoint base path') || (runError || analysisDoc?.errorMessage || '').toLowerCase().includes('missing path') ? (
+                <Text style={[styles.hintText, { color: '#334155', marginTop: 6 }]}>
+                  Projektet saknar SharePoint-rotmapp. Gå till Kalkylskede → högerklick på projektet i sidomenyn → Ändra, och välj lagringsplats (SharePoint-mapp). Spara. Kör sedan analysen igen.
+                </Text>
+              ) : null}
+            </View>
           ) : null}
 
           {Platform.OS === 'web' && pid ? (
@@ -414,6 +530,11 @@ const styles = StyleSheet.create({
   primaryButtonDisabled: { backgroundColor: '#CBD5E1' },
   primaryButtonText: { color: '#fff', fontSize: 14, fontWeight: '500' },
   hintText: { marginLeft: 10, marginTop: 8, fontSize: 12, fontWeight: '400', color: '#64748b', lineHeight: 16 },
+  analyzingBlock: { flexDirection: 'column', gap: 8, marginTop: 4 },
+  progressBarTrack: { height: 6, backgroundColor: '#E2E8F0', borderRadius: 3, overflow: 'hidden', marginTop: 4 },
+  progressBarFill: { height: '100%', backgroundColor: '#1976D2', borderRadius: 3 },
+  cancelButton: { alignSelf: 'flex-start', marginTop: 6, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#F1F5F9', borderRadius: 8, borderWidth: 1, borderColor: '#E2E8F0' },
+  cancelButtonText: { fontSize: 13, fontWeight: '500', color: '#64748b' },
   metaText: { marginTop: 10, fontSize: 12, fontWeight: '400', color: '#94a3b8' },
 
   grid: { gap: 12 },

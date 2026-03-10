@@ -4,7 +4,8 @@
  * This is the single source of truth for all folder/project structure
  */
 
-import { getAccessToken } from './authService';
+import { getAccessToken, isPendingTenantSync } from './authService';
+import { normalizeSiteIdForGraph } from './graphSiteId';
 
 const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
 
@@ -61,14 +62,19 @@ async function getCompanySiteId(companyId) {
  * Get drive items (folders and files) from SharePoint
  * @param {string} siteId - SharePoint Site ID
  * @param {string} [itemPath] - Path to item (e.g., "Kalkylskede" or "Kalkylskede/Entreprenad")
+ * @param {string} [accessTokenOverride] - Optional token (t.ex. tenant-token för företagets custom-sites); om angiven används den istället för huvudapp-token
  * @returns {Promise<Array>} Array of drive items
  */
-export async function getDriveItems(siteId, itemPath = '') {
+export async function getDriveItems(siteId, itemPath = '', accessTokenOverride = null) {
   if (!siteId) {
     throw new Error('Site ID is required');
   }
+  if (!accessTokenOverride && isPendingTenantSync()) {
+    return [];
+  }
+  siteId = normalizeSiteIdForGraph(siteId);
 
-  const accessToken = await getAccessToken();
+  const accessToken = accessTokenOverride || await getAccessToken();
   if (!accessToken) {
     throw new Error('Failed to get access token. Please authenticate first.');
   }
@@ -192,14 +198,16 @@ export async function getDriveItems(siteId, itemPath = '') {
     
     // Log final endpoint for debugging (truncate siteId for readability)
     const logSiteId = siteId ? (siteId.length > 50 ? siteId.substring(0, 50) + '...' : siteId) : 'null';
-    console.log('[hierarchyService] getDriveItems', {
-      siteId: logSiteId,
-      itemPath: itemPath || '(empty)',
-      normalizedPath: normalizedPath || '(empty)',
-      isValidPath: isValidPath === true ? 'true' : 'false', // Ensure boolean is logged as string for clarity
-      isValidPathType: typeof isValidPath,
-      endpoint: endpoint.replace(siteId || '', 'SITE_ID')
-    });
+    // Last-second fix: if endpoint still has wrong siteId format (dots), normalize and rebuild (handles cache/bundling edge cases)
+    const siteIdInUrl = endpoint.match(/\/sites\/([^/]+)\//);
+    if (siteIdInUrl && siteIdInUrl[1]) {
+      const raw = siteIdInUrl[1];
+      const hasWrongFormat = raw.includes('.sharepoint.com.') || /[0-9a-f-]+\.[0-9a-f]{8}/i.test(raw);
+      if (hasWrongFormat) {
+        const fixedSiteId = normalizeSiteIdForGraph(raw);
+        endpoint = endpoint.replace(raw, fixedSiteId);
+      }
+    }
 
     const response = await fetch(endpoint, {
       method: 'GET',
@@ -237,6 +245,9 @@ export async function getDriveItems(siteId, itemPath = '') {
 export async function getSharePointHierarchy(companyId, phaseKey = null, maxDepth = 1) {
   if (!companyId) {
     throw new Error('Company ID is required');
+  }
+  if (isPendingTenantSync()) {
+    return [];
   }
 
   const siteId = await getCompanySiteId(companyId);
@@ -893,11 +904,13 @@ export async function deleteItem(companyId, itemPath) {
  * Get a drive item by path within a specific site.
  * @param {string} siteId
  * @param {string} itemPath - Path relative to drive root, e.g. "Projects/2026"
+ * @param {string} [accessTokenOverride] - Optional token (t.ex. tenant-token för företagets custom-site)
  */
-export async function getDriveItemByPath(siteId, itemPath = '') {
+export async function getDriveItemByPath(siteId, itemPath = '', accessTokenOverride = null) {
   if (!siteId) throw new Error('Site ID is required');
+  siteId = normalizeSiteIdForGraph(siteId);
 
-  const accessToken = await getAccessToken();
+  const accessToken = accessTokenOverride || await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
 
   const clean = String(itemPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
@@ -920,13 +933,14 @@ export async function getDriveItemByPath(siteId, itemPath = '') {
   return await res.json();
 }
 
-export async function renameDriveItemById(siteId, itemId, newName) {
+export async function renameDriveItemById(siteId, itemId, newName, accessTokenOverride = null) {
   if (!siteId) throw new Error('Site ID is required');
   if (!itemId) throw new Error('Item ID is required');
   const name = String(newName || '').trim();
   if (!name) throw new Error('New name is required');
+  siteId = normalizeSiteIdForGraph(siteId);
 
-  const accessToken = await getAccessToken();
+  const accessToken = accessTokenOverride || await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
 
   const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/items/${itemId}`;
@@ -947,11 +961,12 @@ export async function renameDriveItemById(siteId, itemId, newName) {
   return await res.json();
 }
 
-export async function deleteDriveItemById(siteId, itemId) {
+export async function deleteDriveItemById(siteId, itemId, accessTokenOverride = null) {
   if (!siteId) throw new Error('Site ID is required');
   if (!itemId) throw new Error('Item ID is required');
+  siteId = normalizeSiteIdForGraph(siteId);
 
-  const accessToken = await getAccessToken();
+  const accessToken = accessTokenOverride || await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
 
   const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/items/${itemId}`;
@@ -975,6 +990,7 @@ export async function moveDriveItemById(siteId, itemId, newParentItemId) {
   if (newParentItemId === undefined || newParentItemId === null) {
     throw new Error('New parent item ID is required');
   }
+  siteId = normalizeSiteIdForGraph(siteId);
 
   const accessToken = await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
@@ -1002,20 +1018,89 @@ export async function renameDriveItemByPath(siteId, itemPath, newName) {
   return await renameDriveItemById(siteId, item?.id, newName);
 }
 
-export async function deleteDriveItemByPath(siteId, itemPath) {
+export async function deleteDriveItemByPath(siteId, itemPath, accessTokenOverride = null) {
+  const item = await getDriveItemByPath(siteId, itemPath, accessTokenOverride);
+  return await deleteDriveItemById(siteId, item?.id, accessTokenOverride);
+}
+
+/**
+ * Download file content from SharePoint (for copy/export).
+ * @param {string} siteId
+ * @param {string} itemPath - Path relative to drive root
+ * @returns {Promise<Blob>}
+ */
+export async function downloadDriveFileContent(siteId, itemPath) {
   const item = await getDriveItemByPath(siteId, itemPath);
-  return await deleteDriveItemById(siteId, item?.id);
+  const url = item?.['@microsoft.graph.downloadUrl'];
+  if (!url) throw new Error('Filen har ingen nedladdnings-URL');
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Failed to get access token');
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) throw new Error(`Nedladdning misslyckades: ${res.status}`);
+  return await res.blob();
+}
+
+/**
+ * Hämta kortlivad inbäddnings-URL för förhandsgranskning (Excel, Word, etc.).
+ * Används för att visa filen i iframe utan "Det gick inte att hitta filen".
+ * Kräver Files.Read (eller Files.ReadWrite).
+ * @param {string} siteId - SharePoint site ID
+ * @param {string} itemId - Drive item ID
+ * @returns {Promise<string|null>} getUrl för iframe, eller null om inte tillgängligt
+ */
+export async function getDriveItemPreviewUrl(siteId, itemId) {
+  if (!siteId || !itemId) return null;
+  siteId = normalizeSiteIdForGraph(siteId);
+  const accessToken = await getAccessToken();
+  if (!accessToken) return null;
+  const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/items/${encodeURIComponent(itemId)}/preview`;
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => ({}));
+  const url = data?.getUrl;
+  return typeof url === 'string' && url.trim() ? url.trim() : null;
 }
 
 export async function moveDriveItemByPath(siteId, itemPath, newParentPath) {
-  const item = await getDriveItemByPath(siteId, itemPath);
+  let item;
+  let parentItem;
+  try {
+    item = await getDriveItemByPath(siteId, itemPath);
+  } catch (e) {
+    const is404 = e?.status === 404 || (e?.message && String(e.message).includes('404'));
+    throw new Error(is404
+      ? 'Projektmappen hittades inte i SharePoint. Kontrollera att sökvägen stämmer.'
+      : (e?.message || 'Kunde inte hitta projektmappen.'));
+  }
+  if (!item?.id) {
+    throw new Error('Projektmappen hittades inte i SharePoint. Kontrollera att sökvägen stämmer.');
+  }
   const parentClean = String(newParentPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
-  const parentItem = await getDriveItemByPath(siteId, parentClean);
-  return await moveDriveItemById(siteId, item?.id, parentItem?.id);
+  try {
+    parentItem = await getDriveItemByPath(siteId, parentClean);
+  } catch (e) {
+    const is404 = e?.status === 404 || (e?.message && String(e.message).includes('404'));
+    throw new Error(is404
+      ? 'Målplatsen (mappen att flytta till) hittades inte i SharePoint. Kontrollera att platsen finns.'
+      : (e?.message || 'Kunde inte hitta målplatsen.'));
+  }
+  if (!parentItem?.id) {
+    throw new Error('Målplatsen (mappen att flytta till) hittades inte i SharePoint. Kontrollera att platsen finns.');
+  }
+  return await moveDriveItemById(siteId, item.id, parentItem.id);
 }
 
 async function getSiteDriveId(siteId) {
   if (!siteId) throw new Error('Site ID is required');
+  siteId = normalizeSiteIdForGraph(siteId);
   const accessToken = await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
 
@@ -1127,7 +1212,7 @@ export async function moveDriveItemAcrossSitesByPath({ sourceSiteId, sourcePath,
   if (!srcSite) throw new Error('sourceSiteId is required');
   if (!dstSite) throw new Error('destSiteId is required');
   if (!srcPath) throw new Error('sourcePath is required');
-  if (!dstParentPath) throw new Error('destParentPath is required');
+  // dstParentPath kan vara tom för att flytta till site-roten
 
   const srcItem = await getDriveItemByPath(srcSite, srcPath);
   const srcItemId = String(srcItem?.id || '').trim();
@@ -1159,6 +1244,9 @@ export async function moveDriveItemAcrossSitesByPath({ sourceSiteId, sourcePath,
 export async function checkSharePointConnection(companyId) {
   if (!companyId) {
     return { connected: false, siteId: null, siteUrl: null, siteName: null, error: 'No company ID provided' };
+  }
+  if (isPendingTenantSync()) {
+    return { connected: false, siteId: null, siteUrl: null, siteName: null, error: null };
   }
 
   try {
@@ -1225,6 +1313,67 @@ export async function checkSharePointConnection(companyId) {
       siteUrl: null,
       siteName: null,
       error: error?.message || 'Unknown error checking SharePoint connection' 
+    };
+  }
+}
+
+/**
+ * Check a single SharePoint site by ID (for dropdown/status list).
+ * @param {string} siteId - SharePoint Site ID
+ * @returns {Promise<{connected: boolean, siteId: string|null, siteUrl: string|null, siteName: string|null, error: string|null}>}
+ */
+export async function checkSharePointSiteById(siteId) {
+  if (!siteId || !String(siteId).trim()) {
+    return { connected: false, siteId: null, siteUrl: null, siteName: null, error: 'No site ID provided' };
+  }
+  const sid = String(siteId).trim();
+  try {
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      return { connected: false, siteId: sid, siteUrl: null, siteName: null, error: 'Failed to get access token' };
+    }
+    const siteEndpoint = `${GRAPH_API_BASE}/sites/${sid}`;
+    const siteResponse = await fetch(siteEndpoint, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+      },
+    });
+    let siteUrl = null;
+    let siteName = null;
+    if (siteResponse.ok) {
+      try {
+        const siteData = await siteResponse.json();
+        siteUrl = siteData.webUrl || null;
+        siteName = siteData.displayName || siteData.name || null;
+      } catch (_e) {}
+    }
+    const endpoint = `${GRAPH_API_BASE}/sites/${sid}/drive/root`;
+    const response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+      },
+    });
+    if (!response.ok) {
+      return {
+        connected: false,
+        siteId: sid,
+        siteUrl,
+        siteName,
+        error: `Kan inte nå siten: ${response.status} ${response.statusText}`,
+      };
+    }
+    return { connected: true, siteId: sid, siteUrl, siteName, error: null };
+  } catch (error) {
+    return {
+      connected: false,
+      siteId: sid,
+      siteUrl: null,
+      siteName: null,
+      error: error?.message || 'Okänt fel',
     };
   }
 }
@@ -1300,4 +1449,48 @@ export async function createSharePointFolder(companyId, parentPath, folderName) 
     console.error('[hierarchyService] Error creating SharePoint folder:', error);
     throw error;
   }
+}
+
+/**
+ * Skapa mapp i en valfri SharePoint-site (t.ex. projektsite).
+ * @param {string} siteId - SharePoint site ID
+ * @param {string} parentPath - Föräldramapp (tom sträng = root)
+ * @param {string} folderName - Namn på den nya mappen
+ * @returns {Promise<{ id, name, path }>}
+ */
+export async function createFolderInSite(siteId, parentPath, folderName) {
+  if (!siteId || !folderName) throw new Error('Site ID och mappnamn krävs.');
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Kunde inte hämta åtkomsttoken.');
+  let endpoint;
+  const path = String(parentPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  if (path) {
+    const encoded = encodeGraphPath(path);
+    endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/root:/${encoded}:`;
+  } else {
+    endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/root`;
+  }
+  const res = await fetch(`${endpoint}/children`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      name: String(folderName).trim(),
+      folder: {},
+      '@microsoft.graph.conflictBehavior': 'rename',
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Kunde inte skapa mapp: ${res.status} ${err}`);
+  }
+  const data = await res.json();
+  return {
+    id: data.id,
+    name: data.name,
+    path: path ? `${path}/${data.name}` : data.name,
+  };
 }

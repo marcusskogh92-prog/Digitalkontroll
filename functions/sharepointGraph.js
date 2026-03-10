@@ -29,14 +29,53 @@ async function graphGetSiteByUrl({ hostname, siteSlug, accessToken }) {
   return { siteId: data.id, webUrl: data.webUrl };
 }
 
+/** Sanitize display name for Graph (avoids "One of the provided arguments is not acceptable"). */
+function sanitizeSiteDisplayName(name) {
+  return String(name || '')
+    .replace(/[\x00-\x1F\x7F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 256) || 'Digitalkontroll site';
+}
+
+/** Sätt visningsnamn på en site efter skapande (så att den inte visas som "Team Site" i 365-admin). */
+async function graphPatchSiteDisplayName(siteId, displayName, accessToken) {
+  const sid = String(siteId || '').trim();
+  const name = sanitizeSiteDisplayName(displayName);
+  if (!sid || !name) return;
+  try {
+    const res = await fetch(`https://graph.microsoft.com/v1.0/sites/${sid}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      console.warn('[graphPatchSiteDisplayName] PATCH failed (non-fatal):', res.status, txt.substring(0, 200));
+    }
+  } catch (e) {
+    console.warn('[graphPatchSiteDisplayName]', e?.message || e);
+  }
+}
+
 async function graphCreateTeamSite({ hostname, siteSlug, displayName, description, accessToken, ownerEmail }) {
+  const host = String(hostname || '').trim().toLowerCase();
+  const slug = String(siteSlug || '').trim();
+  if (!slug) throw new Error('siteSlug is required');
+  const webUrl = `https://${host}/sites/${slug}`;
+  const owner = String(ownerEmail || '').trim();
+  if (!owner) throw new Error('ownerEmail is required for site creation');
   const payload = {
-    displayName: String(displayName || '').trim(),
-    name: String(siteSlug || '').trim(),
-    description: String(description || '').trim(),
-    siteCollection: { hostname: String(hostname || '').trim() },
-    template: 'teamSite',
-    ownerIdentityToResolve: { email: String(ownerEmail || '').trim() },
+    name: sanitizeSiteDisplayName(displayName) || slug,
+    webUrl,
+    description: String(description || '').trim().substring(0, 512) || 'Digitalkontroll site',
+    template: 'sts',
+    locale: 'en-US',
+    shareByEmailEnabled: false,
+    ownerIdentityToResolve: { email: owner },
   };
 
   const res = await fetch('https://graph.microsoft.com/beta/sites', {
@@ -48,15 +87,68 @@ async function graphCreateTeamSite({ hostname, siteSlug, displayName, descriptio
     body: JSON.stringify(payload),
   });
 
+  if (res.status === 202) {
+    const location = res.headers.get('Location');
+    if (location) {
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const statusRes = await fetch(location.startsWith('http') ? location : `https://graph.microsoft.com/beta${location.startsWith('/') ? '' : '/'}${location}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!statusRes.ok) continue;
+        const statusJson = await statusRes.json().catch(() => ({}));
+        if (statusJson?.status === 'completed') {
+          const resourceUrl = statusJson?.resourceLocation || statusJson?.targetResourceLocation;
+          if (resourceUrl) {
+            const getUrl = resourceUrl.startsWith('http') ? resourceUrl : `https://graph.microsoft.com/beta${resourceUrl.startsWith('/') ? '' : '/'}${resourceUrl}`;
+            const getRes = await fetch(getUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+            if (getRes.ok) {
+              const siteData = await getRes.json();
+              await graphPatchSiteDisplayName(siteData.id, displayName, accessToken);
+              return { siteId: siteData.id, webUrl: siteData.webUrl };
+            }
+          }
+          const byPath = await graphGetSiteByUrl({ hostname: host, siteSlug: slug, accessToken });
+          if (byPath) {
+            await graphPatchSiteDisplayName(byPath.siteId, displayName, accessToken);
+            return byPath;
+          }
+        }
+        if (statusJson?.status === 'failed') {
+          const errMsg = statusJson?.error?.message || 'Site creation failed';
+          throw new Error(errMsg);
+        }
+      }
+    }
+    const byPath = await graphGetSiteByUrl({ hostname: host, siteSlug: slug, accessToken });
+    if (byPath) {
+      await graphPatchSiteDisplayName(byPath.siteId, displayName, accessToken);
+      return byPath;
+    }
+    throw new Error('Site skapades inte inom avvänt tid (202).');
+  }
+
   if (!res.ok) {
     const txt = await res.text();
-    if (res.status === 409 || res.status === 400) {
-      return null;
+    let graphMsg = txt;
+    try {
+      const errJson = JSON.parse(txt);
+      graphMsg = errJson?.error?.message || errJson?.error?.innerError?.message || txt;
+    } catch (_e) {}
+    if (res.status === 409) {
+      throw new Error(`Siten finns redan (409). ${graphMsg}`);
     }
-    throw new Error(`Graph createSite failed: ${res.status} - ${txt}`);
+    if (res.status === 400) {
+      throw new Error(`Graph avvisade skapandet (400): ${graphMsg}`);
+    }
+    if (res.status === 429) {
+      throw new Error(`Graph throttling (429): ${graphMsg}`);
+    }
+    throw new Error(`Graph createSite failed: ${res.status} - ${graphMsg}`);
   }
 
   const data = await res.json();
+  await graphPatchSiteDisplayName(data.id, displayName, accessToken);
   return { siteId: data.id, webUrl: data.webUrl };
 }
 
@@ -280,6 +372,48 @@ async function ensureDkBasStructureAdmin({ siteId, accessToken }) {
   }
 }
 
+/**
+ * Ensure DK Bas folder structure for a company (Company/, Projects/, Företagsmallar/).
+ * Called when a new company is provisioned so the base site has the expected folders.
+ * Safe to call multiple times – existing folders are skipped.
+ */
+async function ensureCompanyBaseSiteStructureAdmin({ siteId, companyId, accessToken }) {
+  const cid = String(companyId || '').trim();
+  if (!cid) throw new Error('companyId is required');
+  const sid = String(siteId || '').trim();
+  if (!sid) throw new Error('siteId is required');
+  if (!accessToken) throw new Error('accessToken is required');
+
+  const folders = [
+    'Company',
+    `Company/${cid}`,
+    `Company/${cid}/Logos`,
+    `Company/${cid}/Users`,
+    'Projects',
+    'Projects/Kalkylskede',
+    'Projects/Produktion',
+    'Projects/Avslut',
+    'Projects/Eftermarknad',
+    'Företagsmallar',
+    'Företagsmallar/01 - Kalkylskede',
+    'Företagsmallar/01 - Kalkylskede/Arkiv',
+    'Företagsmallar/02 - Produktion',
+    'Företagsmallar/02 - Produktion/Arkiv',
+    'Företagsmallar/03 - Avslutat',
+    'Företagsmallar/03 - Avslutat/Arkiv',
+    'Företagsmallar/04 - Eftermarknad',
+    'Företagsmallar/04 - Eftermarknad/Arkiv',
+  ];
+
+  for (const path of folders) {
+    try {
+      await ensureFolderPathAdmin({ siteId: sid, path, accessToken });
+    } catch (err) {
+      console.warn('[ensureCompanyBaseSiteStructureAdmin] Folder create failed:', path, err?.message || err);
+    }
+  }
+}
+
 module.exports = {
   encodeGraphPath,
   graphGetSiteByUrl,
@@ -295,4 +429,5 @@ module.exports = {
   deleteDriveTreeByIdAdmin,
   ensureFolderPathAdmin,
   ensureDkBasStructureAdmin,
+  ensureCompanyBaseSiteStructureAdmin,
 };

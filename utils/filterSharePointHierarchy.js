@@ -3,8 +3,10 @@
  * Shows all enabled sites with their folders
  */
 
-import { getAvailableSharePointSites, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, saveSharePointNavigationConfig } from '../components/firebase';
+import { fetchCompanySharePointSiteMetas, fetchCompanyProfile, getAvailableSharePointSites, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, saveSharePointNavigationConfig } from '../components/firebase';
+import { getAccessTokenForTenant } from '../services/azure/authService';
 import { getDriveItems } from '../services/azure/hierarchyService';
+import { normalizeSiteIdForGraph } from '../services/azure/graphSiteId';
 
 /**
  * Build hierarchy from all enabled SharePoint sites
@@ -26,13 +28,14 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
       config = await getSharePointNavigationConfig(companyId);
     }
 
-    // Enabled sites are controlled by Firestore metadata (sharepoint_sites)
-    // so visibility does not require SharePoint Navigation.
-    let enabledSites = [];
-    try {
-      enabledSites = await getCompanyVisibleSharePointSiteIds(companyId);
-    } catch (_e) {
-      enabledSites = [];
+    // Enabled sites: använd redan hämtade om navConfig.enabledSites finns (snabbare).
+    let enabledSites = Array.isArray(navConfig?.enabledSites) ? navConfig.enabledSites : null;
+    if (enabledSites === null) {
+      try {
+        enabledSites = await getCompanyVisibleSharePointSiteIds(companyId);
+      } catch (_e) {
+        enabledSites = [];
+      }
     }
 
     // IMPORTANT: No legacy enabledSites fallback here.
@@ -62,6 +65,30 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
       });
     }
 
+    // Firestore display names and meta (for company-tenant sites that are not in Graph/app token)
+    let siteMetaNameBySiteId = {};
+    let metaBySiteId = {};
+    try {
+      const metas = await fetchCompanySharePointSiteMetas(companyId);
+      if (Array.isArray(metas)) {
+        metas.forEach((m) => {
+          const id = String(m?.siteId || m?.id || '').trim();
+          if (!id) return;
+          const displayName = String(m?.siteName || '').trim();
+          if (displayName) siteMetaNameBySiteId[id] = displayName;
+          metaBySiteId[id] = m;
+        });
+      }
+    } catch (_e) {
+      // non-fatal: fall back to Graph name
+    }
+
+    const isCompanyTenantSite = (sid) => {
+      const meta = metaBySiteId[sid];
+      const role = String(meta?.role || '').trim().toLowerCase();
+      return role === 'custom' || role === 'extra';
+    };
+
     // Self-heal: never show DK Bas (system/base site) even if legacy config accidentally enables it.
     // We only exclude when we are reasonably confident (to avoid hiding unrelated sites).
     const isProbablyBaseSite = (siteId) => {
@@ -87,16 +114,58 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
     const siteHierarchies = [];
     const invalidPathsBySite = {}; // siteId -> Set(paths) som inte längre finns i SharePoint
     
-    for (const siteId of enabledSites) {
-      if (!siteId) continue;
-      
-      const site = sitesMap[siteId];
-      const siteName = site?.name || site?.displayName || siteId;
-      const siteConfig = siteConfigs[siteId] || {};
-      const hasExplicitSiteConfig = Object.prototype.hasOwnProperty.call(siteConfigs, siteId);
-      
+    for (const rawSiteId of enabledSites) {
+      if (!rawSiteId) continue;
+      const siteId = normalizeSiteIdForGraph(String(rawSiteId).trim());
+
+      const site = sitesMap[rawSiteId] || sitesMap[siteId];
+      const siteName = siteMetaNameBySiteId[rawSiteId] || siteMetaNameBySiteId[siteId] || site?.name || site?.displayName || siteId;
+      const siteConfig = siteConfigs[rawSiteId] || siteConfigs[siteId] || {};
+      const meta = metaBySiteId[rawSiteId] || metaBySiteId[siteId];
+      const webUrlFromMeta = meta?.siteUrl || meta?.webUrl;
+
+      // Company-tenant sites (custom): använd tenant-token för att hämta mappar
+      if (isCompanyTenantSite(rawSiteId) && webUrlFromMeta) {
+        let rootFolders = [];
+        try {
+          const profile = await fetchCompanyProfile(companyId);
+          const azureTenantId = (profile && profile.azureTenantId) ? String(profile.azureTenantId).trim() : '';
+          if (azureTenantId) {
+            const tenantToken = await getAccessTokenForTenant(azureTenantId, companyId);
+            if (tenantToken) {
+              const rootItems = await getDriveItems(siteId, '', tenantToken);
+              rootFolders = (rootItems || []).filter((item) => item && item.folder);
+            }
+          }
+        } catch (err) {
+          console.warn('[filterHierarchyByConfig] Company-tenant root folders:', err);
+        }
+        const siteFolders = (rootFolders || []).map((folder) => ({
+          id: folder.id || `${siteId}-${(folder.name || '').trim()}`,
+          driveItemId: folder.id || null,
+          name: String(folder.name || '').trim() || 'Mapp',
+          type: 'folder',
+          path: String(folder.name || '').trim(),
+          siteId,
+          children: [],
+          expanded: false,
+          isCompanyTenantLink: true,
+        }));
+        siteHierarchies.push({
+          id: `site-${siteId}`,
+          name: siteName,
+          type: 'site',
+          siteId: siteId,
+          webUrl: String(webUrlFromMeta).trim(),
+          children: siteFolders,
+          expanded: true,
+          isCompanyTenantLink: true,
+        });
+        continue;
+      }
+
       try {
-        // Load root folders for this site
+        // Load root folders for this site (app-tenant sites only)
         const rootItems = await getDriveItems(siteId, '');
         const rootFolders = (rootItems || []).filter(item => item && item.folder);
 

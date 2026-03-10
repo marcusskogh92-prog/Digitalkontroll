@@ -1,6 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { MODAL_DESIGN_2026 as D } from '../../constants/modalDesign2026';
+import { formatMobileDisplay } from '../../utils/formatPhone';
+
+const RESIZE_HANDLE_WIDTH = 6;
+const DEFAULT_COLUMN_WIDTHS = [200, 150, 220, 260, 86]; // Namn, Företag, E-post, Telefon, Källa
+const MIN_COLUMN_WIDTHS = [80, 80, 100, 90, 60];
+const CHARS_TO_WIDTH = 7.5;
+const CELL_PADDING = 24;
 
 function normalizeSearch(s) {
   return String(s || '').trim().toLowerCase();
@@ -8,10 +16,38 @@ function normalizeSearch(s) {
 
 function matchesCandidate(candidate, q) {
   if (!q) return true;
-  const hay = [candidate?.name, candidate?.company, candidate?.email, candidate?.phone]
+  const hay = [candidate?.name, candidate?.company, candidate?.email, candidate?.phone, candidate?.workPhone]
     .map((x) => String(x || '').toLowerCase())
     .join(' ');
   return hay.includes(q);
+}
+
+function getPhoneText(c) {
+  const mob = c?.phone ? formatMobileDisplay(c.phone) : '';
+  const work = c?.workPhone ? String(c.workPhone).trim() : '';
+  if (mob && work) return `Mobil: ${mob} / Arbete: ${work}`;
+  if (mob) return `Mobil: ${mob}`;
+  if (work) return `Arbete: ${work}`;
+  return '—';
+}
+
+function getCellText(candidate, colIndex) {
+  if (colIndex === 0) return String(candidate?.name || '—');
+  if (colIndex === 1) return String(candidate?.company || '—');
+  if (colIndex === 2) return String(candidate?.email || '—');
+  if (colIndex === 3) return getPhoneText(candidate);
+  if (colIndex === 4) return sourceLabelFromCandidate(candidate);
+  return '—';
+}
+
+function calcAutoFitWidth(headerLabel, cellTexts) {
+  const headerW = String(headerLabel || '').length * CHARS_TO_WIDTH + CELL_PADDING + 24;
+  let maxCellW = 0;
+  for (const txt of cellTexts) {
+    const w = String(txt || '').length * CHARS_TO_WIDTH + CELL_PADDING;
+    if (w > maxCellW) maxCellW = w;
+  }
+  return Math.max(MIN_COLUMN_WIDTHS[0], Math.min(Math.max(headerW, maxCellW), 500));
 }
 
 function normalizeSortValue(v) {
@@ -64,6 +100,10 @@ export default function ParticipantPickerModal({
 
   onToggleExternal,
 
+  showAllContactsCheckbox = false,
+  showAllContacts = false,
+  onShowAllContactsChange,
+
   onConfirm,
   confirmLabel = 'Lägg till',
 }) {
@@ -103,6 +143,91 @@ export default function ParticipantPickerModal({
   const [showExternal, setShowExternal] = React.useState(true);
 
   const [selectedByKey, setSelectedByKey] = React.useState(() => ({}));
+
+  const [columnWidths, setColumnWidths] = useState(DEFAULT_COLUMN_WIDTHS);
+  const resizeRef = useRef({ column: null, startX: 0, startWidth: 0 });
+  const lastClickRef = useRef({ column: null, time: 0 });
+  const filteredRef = useRef([]);
+
+  const headerLabels = ['Namn', 'Företag', 'E-post', 'Telefon', 'Källa'];
+
+  const autoFitColumn = useCallback((colIndex) => {
+    const list = filteredRef.current;
+    const cellTexts = list.slice(0, 250).map((c) => getCellText(c, colIndex));
+    const newW = calcAutoFitWidth(headerLabels[colIndex], cellTexts);
+    setColumnWidths((prev) => {
+      const next = [...prev];
+      next[colIndex] = newW;
+      return next;
+    });
+  }, []);
+
+  const startResize = useCallback((columnIndex, e) => {
+    if (Platform.OS !== 'web') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const now = Date.now();
+    const last = lastClickRef.current;
+    if (last.column === columnIndex && now - last.time < 400) {
+      lastClickRef.current = { column: null, time: 0 };
+      autoFitColumn(columnIndex);
+      return;
+    }
+    lastClickRef.current = { column: columnIndex, time: now };
+    if (typeof document !== 'undefined') document.body.style.cursor = 'col-resize';
+    const clientX = e.clientX ?? e.nativeEvent?.pageX ?? 0;
+    resizeRef.current = {
+      column: columnIndex,
+      startX: clientX,
+      startWidth: columnWidths[columnIndex],
+    };
+  }, [columnWidths, autoFitColumn]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e) => {
+      const { column, startX, startWidth } = resizeRef.current;
+      if (column == null) return;
+      const clientX = e.clientX ?? 0;
+      const delta = clientX - startX;
+      const minW = MIN_COLUMN_WIDTHS[column] ?? 60;
+      const newWidth = Math.max(minW, startWidth + delta);
+      setColumnWidths((prev) => {
+        const next = [...prev];
+        next[column] = newWidth;
+        return next;
+      });
+      resizeRef.current = { column, startX: clientX, startWidth: newWidth };
+    };
+    const onUp = () => {
+      if (resizeRef.current.column != null && typeof document !== 'undefined') {
+        document.body.style.cursor = '';
+      }
+      resizeRef.current = { column: null, startX: 0, startWidth: 0 };
+    };
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        requestClose?.();
+      }
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('keydown', onKeyDown);
+      if (typeof document !== 'undefined') document.body.style.cursor = '';
+    };
+  }, [requestClose]);
+
+  const tableGap = 10;
+  const totalTableWidth =
+    columnWidths.reduce((a, b) => a + b, 0) +
+    (Platform.OS === 'web' ? 4 * RESIZE_HANDLE_WIDTH + 8 * tableGap : 4 * tableGap);
+  const col = (i) => ({ width: columnWidths[i], minWidth: columnWidths[i], flexShrink: 0 });
 
   React.useEffect(() => {
     setSelectedByKey((prev) => {
@@ -219,6 +344,25 @@ export default function ParticipantPickerModal({
       });
   }, [showInternal, showExternal, internalCandidates, externalCandidates, search, existingRowKeys, sortKey, sortDir]);
 
+  filteredRef.current = filtered;
+
+  const autoFitDoneRef = useRef(false);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (filtered.length === 0) return;
+    if (autoFitDoneRef.current) return;
+    autoFitDoneRef.current = true;
+    const items = filtered.slice(0, 250);
+    setColumnWidths((prev) => {
+      const next = [...prev];
+      for (let i = 0; i < headerLabels.length; i++) {
+        const cellTexts = items.map((c) => getCellText(c, i));
+        next[i] = calcAutoFitWidth(headerLabels[i], cellTexts);
+      }
+      return next;
+    });
+  }, [filtered]);
+
   const selectedList = React.useMemo(() => {
     const map = selectedByKey && typeof selectedByKey === 'object' ? selectedByKey : {};
     return Object.keys(map)
@@ -266,16 +410,14 @@ export default function ParticipantPickerModal({
     <View style={Platform.OS === 'web' ? styles.webOuter : null}>
       <View style={[styles.card, styles.cardFixed]}>
         <View style={styles.header}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <View style={{ width: 30, height: 30, borderRadius: 10, backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="person-add-outline" size={16} color={COLORS.blue} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+            <View style={styles.headerIconWrap}>
+              <Ionicons name="person-add-outline" size={D.headerNeutralCompactIconPx || 14} color="#fff" />
             </View>
-            <View style={{ minWidth: 0 }}>
+            <View style={{ minWidth: 0, flex: 1 }}>
               <Text style={styles.title} numberOfLines={1}>
                 {title}
-              </Text>
-              <Text style={styles.subtitle} numberOfLines={1}>
-                {subtitle}
+                {subtitle ? ` — ${subtitle}` : ''}
               </Text>
             </View>
           </View>
@@ -283,15 +425,12 @@ export default function ParticipantPickerModal({
             onPress={requestClose}
             title={Platform.OS === 'web' ? 'Stäng' : undefined}
             style={({ hovered, pressed }) => [
-              styles.secondaryButton,
-              hovered || pressed ? styles.secondaryButtonHot : null,
+              styles.headerCloseBtn,
+              (hovered || pressed) ? styles.headerCloseBtnHover : null,
               Platform.OS === 'web' ? { cursor: 'pointer' } : null,
             ]}
           >
-            {({ hovered, pressed }) => {
-              const hot = hovered || pressed;
-              return <Text style={[styles.secondaryButtonLabel, { color: hot ? COLORS.blue : COLORS.neutral }]}>Stäng</Text>;
-            }}
+            <Ionicons name="close" size={D.headerNeutralCompactCloseIconPx || 18} color="#fff" />
           </Pressable>
         </View>
 
@@ -356,13 +495,31 @@ export default function ParticipantPickerModal({
             </View>
           ) : null}
 
-          <View style={styles.tableWrap}>
-            <View style={[styles.tableHeader, { backgroundColor: COLORS.bgMuted, borderBottomColor: COLORS.tableBorder }]}>
+          {showAllContactsCheckbox && allowExternal && showExternal ? (
+            <Pressable
+              onPress={() => onShowAllContactsChange?.(!showAllContacts)}
+              style={[
+                { flexDirection: 'row', alignItems: 'center', marginBottom: 10, marginTop: 4 },
+                Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+              ]}
+            >
+              <Ionicons
+                name={!showAllContacts ? 'checkbox' : 'square-outline'}
+                size={20}
+                color={!showAllContacts ? COLORS.blue : COLORS.textSubtle}
+                style={{ marginRight: 8 }}
+              />
+              <Text style={{ fontSize: 14, color: COLORS.text }}>Visa endast deltagare från valt företag</Text>
+            </Pressable>
+          ) : null}
+
+          <View style={[styles.tableWrap, Platform.OS === 'web' ? { minWidth: totalTableWidth, overflowX: 'auto' } : null]}>
+            <View style={[styles.tableHeader, styles.tableHeaderRow, { backgroundColor: COLORS.bgMuted, borderBottomColor: COLORS.tableBorder, width: Platform.OS === 'web' ? totalTableWidth : undefined }]}>
               <Pressable
                 onPress={() => toggleSort('name')}
                 style={({ hovered, pressed }) => [
                   styles.thPressable,
-                  { flex: 1.5 },
+                  col(0),
                   (hovered || pressed) ? styles.thPressableHot : null,
                   Platform.OS === 'web' ? { cursor: 'pointer' } : null,
                 ]}
@@ -371,12 +528,13 @@ export default function ParticipantPickerModal({
                   Namn <Text style={styles.sortIcon}>{getSortIndicator('name')}</Text>
                 </Text>
               </Pressable>
+              {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize(0, e)}><View style={styles.resizeHandleLine} /></View>}
 
               <Pressable
                 onPress={() => toggleSort('company')}
                 style={({ hovered, pressed }) => [
                   styles.thPressable,
-                  { flex: 1.2 },
+                  col(1),
                   (hovered || pressed) ? styles.thPressableHot : null,
                   Platform.OS === 'web' ? { cursor: 'pointer' } : null,
                 ]}
@@ -385,12 +543,13 @@ export default function ParticipantPickerModal({
                   Företag <Text style={styles.sortIcon}>{getSortIndicator('company')}</Text>
                 </Text>
               </Pressable>
+              {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize(1, e)}><View style={styles.resizeHandleLine} /></View>}
 
               <Pressable
                 onPress={() => toggleSort('email')}
                 style={({ hovered, pressed }) => [
                   styles.thPressable,
-                  { flex: 1.35 },
+                  col(2),
                   (hovered || pressed) ? styles.thPressableHot : null,
                   Platform.OS === 'web' ? { cursor: 'pointer' } : null,
                 ]}
@@ -399,12 +558,13 @@ export default function ParticipantPickerModal({
                   E-post <Text style={styles.sortIcon}>{getSortIndicator('email')}</Text>
                 </Text>
               </Pressable>
+              {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize(2, e)}><View style={styles.resizeHandleLine} /></View>}
 
               <Pressable
                 onPress={() => toggleSort('phone')}
                 style={({ hovered, pressed }) => [
                   styles.thPressable,
-                  { flex: 1.0 },
+                  col(3),
                   (hovered || pressed) ? styles.thPressableHot : null,
                   Platform.OS === 'web' ? { cursor: 'pointer' } : null,
                 ]}
@@ -413,12 +573,14 @@ export default function ParticipantPickerModal({
                   Telefon <Text style={styles.sortIcon}>{getSortIndicator('phone')}</Text>
                 </Text>
               </Pressable>
+              {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize(3, e)}><View style={styles.resizeHandleLine} /></View>}
 
               <Pressable
                 onPress={() => toggleSort('source')}
                 style={({ hovered, pressed }) => [
                   styles.thPressable,
-                  { width: 86, alignItems: 'flex-end' },
+                  col(4),
+                  { alignItems: 'flex-end' },
                   (hovered || pressed) ? styles.thPressableHot : null,
                   Platform.OS === 'web' ? { cursor: 'pointer' } : null,
                 ]}
@@ -442,7 +604,13 @@ export default function ParticipantPickerModal({
                 <Text style={{ color: '#666', fontSize: 13 }}>Inga träffar.</Text>
               </View>
             ) : (
-              <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
+              <ScrollView
+                style={[
+                  { flex: 1 },
+                  Platform.OS === 'web' ? { overflowY: 'scroll' } : null,
+                ]}
+                keyboardShouldPersistTaps="handled"
+              >
                 {filtered.slice(0, 250).map((c) => {
                   const isSelected = !!(c && c._key && selectedByKey && selectedByKey[c._key]);
                   const sourceLabel = sourceLabelFromCandidate(c);
@@ -488,11 +656,11 @@ export default function ParticipantPickerModal({
                             borderLeftWidth: (isSelected || isLocked) ? 4 : 0,
                             borderLeftColor: isLocked ? '#93C5FD' : (isSelected ? COLORS.blue : 'transparent'),
                           },
-                          Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+                          Platform.OS === 'web' ? { width: totalTableWidth, cursor: 'pointer' } : null,
                         ];
                       }}
                     >
-                      <View style={{ flex: 1.5, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <View style={[col(0), { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }]}>
                         {isLocked ? (
                           <Ionicons name="lock-closed" size={16} color={COLORS.blue} />
                         ) : isSelected ? (
@@ -508,17 +676,31 @@ export default function ParticipantPickerModal({
                           {String(c?.name || '—')}
                         </Text>
                       </View>
-
-                      <Text style={[styles.td, { flex: 1.2, color: COLORS.text }]} numberOfLines={1}>
+                      {Platform.OS === 'web' && <View style={{ width: RESIZE_HANDLE_WIDTH }} />}
+                      <Text style={[styles.td, col(1), { color: COLORS.text }]} numberOfLines={1}>
                         {String(c?.company || '—')}
                       </Text>
-                      <Text style={[styles.td, { flex: 1.35, color: COLORS.text }]} numberOfLines={1}>
+                      {Platform.OS === 'web' && <View style={{ width: RESIZE_HANDLE_WIDTH }} />}
+                      <Text style={[styles.td, col(2), { color: COLORS.text }]} numberOfLines={1}>
                         {String(c?.email || '—')}
                       </Text>
-                      <Text style={[styles.td, { flex: 1.0, color: COLORS.text }]} numberOfLines={1}>
-                        {String(c?.phone || '—')}
+                      {Platform.OS === 'web' && <View style={{ width: RESIZE_HANDLE_WIDTH }} />}
+                      <Text style={[styles.td, col(3)]} numberOfLines={1}>
+                        {(() => {
+                          const mob = c?.phone ? formatMobileDisplay(c.phone) : '';
+                          const work = c?.workPhone ? String(c.workPhone).trim() : '';
+                          if (!mob && !work) return <Text style={{ color: COLORS.text }}>—</Text>;
+                          return (
+                            <>
+                              {mob ? <><Text style={{ color: COLORS.text }}>Mobil: </Text><Text style={{ color: '#1976D2' }}>{mob}</Text></> : null}
+                              {mob && work ? <Text style={{ color: COLORS.text }}> / </Text> : null}
+                              {work ? <><Text style={{ color: COLORS.text }}>Arbete: </Text><Text style={{ color: '#1976D2' }}>{work}</Text></> : null}
+                            </>
+                          );
+                        })()}
                       </Text>
-                      <Text style={[styles.td, { width: 86, fontSize: 12, color: COLORS.textMuted, textAlign: 'right' }]} numberOfLines={1}>
+                      {Platform.OS === 'web' && <View style={{ width: RESIZE_HANDLE_WIDTH }} />}
+                      <Text style={[styles.td, col(4), { fontSize: 12, color: COLORS.textMuted, textAlign: 'right' }]} numberOfLines={1}>
                         {sourceLabel}
                       </Text>
                     </Pressable>
@@ -558,7 +740,7 @@ export default function ParticipantPickerModal({
             disabled={!canConfirm}
             style={({ hovered, pressed }) => {
               const disabled = !canConfirm;
-              const bg = disabled ? '#9CA3AF' : (hovered || pressed ? COLORS.blueHover : COLORS.blue);
+              const bg = disabled ? '#9CA3AF' : (hovered || pressed ? '#3d4d5f' : (D.buttonPrimaryBg ?? '#2D3A4B'));
               return [
                 styles.primaryButton,
                 { backgroundColor: bg },
@@ -566,7 +748,7 @@ export default function ParticipantPickerModal({
               ];
             }}
           >
-            <Ionicons name="add-outline" size={16} color="#fff" />
+            <Ionicons name="add-outline" size={16} color={D.buttonPrimaryColor ?? '#fff'} />
             <Text style={styles.primaryButtonLabel}>
               {selectedCount > 0 ? `${confirmLabel} (${selectedCount})` : confirmLabel}
             </Text>
@@ -587,11 +769,11 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     backgroundColor: '#fff',
-    borderRadius: 14,
+    borderRadius: D.radius ?? 8,
     borderWidth: 1,
     borderColor: '#E6E8EC',
     overflow: 'hidden',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 12px 32px rgba(0,0,0,0.20)' } : { elevation: 6 }),
+    ...(Platform.OS === 'web' ? { boxShadow: D.shadow ?? '0 10px 30px rgba(0,0,0,0.08)' } : { ...D.shadowNative, elevation: 8 }),
   },
   cardFixed: {
     width: Platform.OS === 'web' ? 980 : '100%',
@@ -600,19 +782,32 @@ const styles = StyleSheet.create({
     maxHeight: Platform.OS === 'web' ? '92vh' : '92%',
   },
   header: {
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E6E8EC',
+    ...D.headerNeutral,
+    ...D.headerNeutralCompact,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
   },
+  headerIconWrap: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerCloseBtn: {
+    ...D.closeBtn,
+  },
+  headerCloseBtnHover: {
+    backgroundColor: D.headerNeutralCloseBtnHover,
+  },
   title: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#111',
+    fontSize: D.headerNeutralCompactTitleFontSize ?? 12,
+    fontWeight: D.headerNeutralCompactTitleFontWeight ?? '400',
+    lineHeight: D.headerNeutralCompactTitleLineHeight ?? 16,
+    color: D.headerNeutralTextColor ?? '#fff',
   },
   subtitle: {
     fontSize: 12,
@@ -693,6 +888,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
+  tableHeaderRow: {
+    alignItems: 'center',
+  },
+  resizeHandle: {
+    width: RESIZE_HANDLE_WIDTH,
+    alignSelf: 'stretch',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'col-resize' } : {}),
+  },
+  resizeHandleLine: {
+    position: 'absolute',
+    left: Math.floor(RESIZE_HANDLE_WIDTH / 2) - 1,
+    top: 4,
+    bottom: 4,
+    width: 2,
+    backgroundColor: '#cbd5e1',
+    borderRadius: 1,
+  },
   thPressable: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -734,9 +949,9 @@ const styles = StyleSheet.create({
     fontWeight: '400',
   },
   secondaryButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
+    borderRadius: D.buttonRadius,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     backgroundColor: '#fff',
@@ -749,16 +964,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   primaryButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
+    borderRadius: D.buttonRadius,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
   primaryButtonLabel: {
-    color: '#fff',
+    color: D.buttonPrimaryColor ?? '#fff',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: D.buttonPrimaryFontWeight ?? '600',
   },
 });

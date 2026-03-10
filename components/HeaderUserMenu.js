@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, Text, TouchableOpacity, View } from 'react-native';
 import ContextMenu from './ContextMenu';
+import MyProfileModal from './common/Modals/MyProfileModal';
 import { auth } from './firebase';
 import { formatPersonName } from './formatPersonName';
 
@@ -19,6 +20,8 @@ export default function HeaderUserMenu() {
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
   const [roleLabel, setRoleLabel] = useState('');
+  const [myProfileModalVisible, setMyProfileModalVisible] = useState(false);
+  const [myProfileCompanyId, setMyProfileCompanyId] = useState('');
   const chevronSpinAnim = useRef(new Animated.Value(0)).current;
   const chevronDeg = useRef(0);
 
@@ -40,10 +43,6 @@ export default function HeaderUserMenu() {
   };
 
   const displayName = (auth && auth.currentUser) ? formatPersonName(auth.currentUser.displayName || auth.currentUser.email || '') : 'Användare';
-  const [isOwner, setIsOwner] = useState(false);
-  const [isMsAdmin, setIsMsAdmin] = useState(false);
-  const [isCompanyAdmin, setIsCompanyAdmin] = useState(false);
-  const [isSuperadmin, setIsSuperadmin] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -51,7 +50,6 @@ export default function HeaderUserMenu() {
       try {
         const email = String(auth?.currentUser?.email || '').toLowerCase();
         if (!active) return;
-        setIsOwner(email === 'marcus@msbyggsystem.se' || email === 'marcus.skogh@msbyggsystem.se');
         // Try to read claims and local fallback for companyId
         let tokenRes = null;
         try { tokenRes = await auth.currentUser?.getIdTokenResult(true).catch(() => null); } catch(_e) { tokenRes = null; }
@@ -61,10 +59,8 @@ export default function HeaderUserMenu() {
         const companyId = companyFromClaims || stored || '';
         const adminClaim = !!(claims && (claims.admin === true || claims.role === 'admin'));
         if (!active) return;
-        // MS Byggsystem-admin (behörighet till globala företagsverktyg)
-        setIsMsAdmin(adminClaim && companyId === 'MS Byggsystem');
-        // Admin i valfritt företag (ska kunna hantera sina egna användare)
-        setIsCompanyAdmin(adminClaim);
+        void adminClaim;
+        void companyId;
 
         // Beräkna rolltext och superadmin-flagga för headern
         const emailLower = email;
@@ -77,7 +73,6 @@ export default function HeaderUserMenu() {
         else label = 'Användare';
         if (active) {
           setRoleLabel(label);
-          setIsSuperadmin(superadminFlag);
         }
       } catch(_e) {}
     })();
@@ -85,34 +80,10 @@ export default function HeaderUserMenu() {
   }, []);
 
   const menuItems = [];
-  
-  // Lägg till admin-funktioner först (flyttat från HeaderAdminMenu)
-  const isSuperOrMsAdmin = isOwner || isMsAdmin;
 
-  // Superadmin (ägare/MS-admin) får hantera företag
-  if (isSuperadmin && isSuperOrMsAdmin) {
-    menuItems.push({ key: 'manage_company', label: 'Företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
-  }
-
-  // Både företags-admin och superadmin ska kunna hantera användare
-  if (isCompanyAdmin || isSuperadmin) {
-    menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
-  }
-
-  // Admin + superadmin: kontaktregister
-  if (isCompanyAdmin || isSuperadmin) {
-    menuItems.push({ key: 'contact_registry', label: 'Kontaktregister', icon: <Ionicons name="book-outline" size={16} color="#1976D2" /> });
-    menuItems.push({ key: 'suppliers', label: 'Leverantörer', icon: <Ionicons name="business-outline" size={16} color="#1976D2" /> });
-    menuItems.push({ key: 'customers', label: 'Kunder', icon: <Ionicons name="people-outline" size={16} color="#1976D2" /> });
-    menuItems.push({ key: 'sharepoint_navigation', label: 'SharePoint Navigation', icon: <Ionicons name="cloud-outline" size={16} color="#1976D2" /> });
-  }
-
-  // Separator om det finns admin-funktioner
-  if (menuItems.length > 0) {
-    menuItems.push({ key: 'menu_separator', label: '', isSeparator: true });
-  }
-
-  // Alla roller (superadmin, admin, användare) ska kunna logga ut här
+  // Namndropdown: Min profil, Logga ut (inga Register/Administration)
+  menuItems.push({ key: 'my_profile', label: 'Min profil', icon: <Ionicons name="person-outline" size={16} color="#1976D2" /> });
+  menuItems.push({ key: 'menu_separator', label: '', isSeparator: true });
   menuItems.push({ key: 'logout', label: 'Logga ut', icon: <Ionicons name="log-out-outline" size={16} color="#D32F2F" /> });
 
   const PortalContent = (
@@ -130,6 +101,14 @@ export default function HeaderUserMenu() {
           setMenuVisible(false);
           
           if (it.key === 'logout') {
+            if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+              try {
+                window.dispatchEvent(new CustomEvent('dkRequestLogout'));
+                return;
+              } catch (_e) {
+                // Fallback to direct sign out below
+              }
+            }
             try { await AsyncStorage.removeItem('dk_companyId'); } catch(_e) {}
             try { await auth.signOut(); } catch(_e) {}
             try {
@@ -140,36 +119,13 @@ export default function HeaderUserMenu() {
             return;
           }
 
-          // Hantera admin-funktioner (flyttat från HeaderAdminMenu)
-          if (it.key === 'manage_company') {
-            return navigation.navigate('ManageCompany');
-          }
-          if (it.key === 'manage_users') {
-            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
-            return navigation.navigate('ManageUsers', { companyId: cid });
-          }
-          if (it.key === 'contact_registry') {
-            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
-            return navigation.navigate('ContactRegistry', {
-              companyId: cid,
-              allCompanies: !!isSuperadmin,
-            });
-          }
-          if (it.key === 'suppliers') {
-            return navigation.navigate('Suppliers', {
-              companyId: String(await AsyncStorage.getItem('dk_companyId') || '').trim(),
-            });
-          }
-          if (it.key === 'customers') {
-            return navigation.navigate('Customers', {
-              companyId: String(await AsyncStorage.getItem('dk_companyId') || '').trim(),
-            });
-          }
-          if (it.key === 'sharepoint_navigation') {
-            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
-            return navigation.navigate('ManageSharePointNavigation', {
-              companyId: cid,
-            });
+          if (it.key === 'my_profile') {
+            try {
+              const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+              setMyProfileCompanyId(cid);
+              setMyProfileModalVisible(true);
+            } catch (_e) {}
+            return;
           }
         } catch(_e) {}
       }}
@@ -195,6 +151,12 @@ export default function HeaderUserMenu() {
           <Ionicons name="chevron-down" size={14} color="#666" />
         </Animated.View>
       </TouchableOpacity>
+      <MyProfileModal
+        visible={myProfileModalVisible}
+        companyId={myProfileCompanyId}
+        onClose={() => setMyProfileModalVisible(false)}
+        onSaved={() => {}}
+      />
       {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' ? (() => {
         try {
           let portalRoot = document.getElementById(portalRootId);

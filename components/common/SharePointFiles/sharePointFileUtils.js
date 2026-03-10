@@ -18,6 +18,7 @@ export function classifyFileType(nameOrType) {
   if (ext === 'dwg') return { kind: 'dwg', label: 'DWG', icon: 'cube-outline' };
   if (ext === 'ifc') return { kind: 'ifc', label: 'IFC', icon: 'cube-outline' };
   if (ext === 'zip') return { kind: 'zip', label: 'ZIP', icon: 'archive-outline' };
+  if (ext === 'msg') return { kind: 'file', label: 'E-POST', icon: 'mail-outline' };
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) {
     return { kind: 'image', label: 'Bild', icon: 'image-outline' };
   }
@@ -56,6 +57,8 @@ export const ALLOWED_UPLOAD_EXTENSIONS = new Set([
   'bmp',
   'svg',
   'zip',
+  'msg', // Outlook/e-postmeddelanden – öppnas i systemets mejlapp (t.ex. Outlook)
+  'sdef', // Definition/sidecar-filer (t.ex. vid PDF)
 ]);
 
 export function isAllowedUploadFile(file) {

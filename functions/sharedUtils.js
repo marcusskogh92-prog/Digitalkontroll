@@ -12,6 +12,20 @@ function normalizeSharePointSiteSlug(rawName) {
     .toLowerCase();
 }
 
+/** Normalize company id to a stable Firestore doc id (lowercase, hyphens). Same as client slugFromName. */
+function normalizeCompanyIdToSlug(companyId) {
+  const s = String(companyId || '').trim();
+  if (!s) return '';
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .substring(0, 128) || s.replace(/\s+/g, '-').substring(0, 128);
+}
+
 function generateTempPassword() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=';
   let out = '';
@@ -27,6 +41,7 @@ function callerIsAdmin(context) {
 module.exports = {
   sleep,
   normalizeSharePointSiteSlug,
+  normalizeCompanyIdToSlug,
   generateTempPassword,
   callerIsAdmin,
 };

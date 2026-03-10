@@ -6,9 +6,11 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useState } from 'react';
 import { Alert, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ProjectSidebarHeader } from '../../../../../components/common/ProjectSidebarHeader';
 import SidebarItem from '../../../../../components/common/SidebarItem';
 import { AnimatedChevron, MicroPulse } from '../../../../../components/common/leftNavMicroAnimations';
 import { auth } from '../../../../../components/firebase';
+import { SIDEBAR_BG, SIDEBAR_BORDER_COLOR, SIDEBAR_PHASE_WIDTH } from '../../../../../components/common/layoutConstants';
 import { LEFT_NAV } from '../../../../../constants/leftNavTheme';
 import { useProjectOrganisation } from '../../../../../hooks/useProjectOrganisation';
 import { useProjectTimelineDates } from '../../../../../hooks/useProjectTimelineDates';
@@ -34,9 +36,7 @@ export default function PhaseLeftPanel({
   saveNavigation
 }) {
   const isWeb = Platform.OS === 'web';
-  // Dashboard uses square-corner hover/active highlights; match that inside projects.
-  const squareRowStyle = isWeb ? { borderRadius: 0, borderLeftWidth: 0 } : null;
-  const squareCorners = Boolean(isWeb);
+  // Samma utseende som startsidans vänsterpanel: rundade hörn, blå vänsterkant vid aktiv.
   const rowIndentMode = isWeb ? 'padding' : 'margin';
   const [canEdit, setCanEdit] = useState(false);
   const [expandedSections, setExpandedSections] = useState({});
@@ -161,14 +161,18 @@ export default function PhaseLeftPanel({
       const it = itemId != null ? String(itemId).trim() : '';
 
       // Oversikt items (known saved-data sources)
+      if (sec === 'oversikt' && it === 'checklista') return false;
       if (sec === 'oversikt' && it === 'projektinfo') return hasProjectInfoContent;
       if (sec === 'oversikt' && it === 'organisation-roller') return hasOrganisationMembers;
       if (sec === 'oversikt' && it === 'tidsplan-viktiga-datum') return hasTimelineContent;
-      if (sec === 'oversikt' && it === 'status-beslut') return Number(fragaSvarCount || 0) > 0;
 
       if (sec === 'oversikt' && !it) {
-        return Boolean(hasProjectInfoContent || hasOrganisationMembers || hasTimelineContent || Number(fragaSvarCount || 0) > 0);
+        return Boolean(hasProjectInfoContent || hasOrganisationMembers || hasTimelineContent);
       }
+
+      // FrågaSvar (egen huvudflik)
+      if (sec === 'fragaSvar' && it === 'status-beslut') return Number(fragaSvarCount || 0) > 0;
+      if (sec === 'fragaSvar' && !it) return Number(fragaSvarCount || 0) > 0;
 
       return false;
     },
@@ -485,7 +489,7 @@ export default function PhaseLeftPanel({
   }, [hasSharePointContext, project?.path, navigation]);
 
   const renderSharePointNode = (node, level = 0) => {
-    const treeIndent = 12 + level * 14;
+    const treeIndent = LEFT_NAV.indentPerLevel + level * LEFT_NAV.indentPerLevel;
     const isExpanded = Boolean(node?.expanded);
     const hasChildren = Array.isArray(node?.children) && node.children.length > 0;
     const rowKey = `sp:${node?.path || node?.id || String(level)}`;
@@ -497,11 +501,13 @@ export default function PhaseLeftPanel({
     return (
       <View key={node.path || node.id} style={{ marginTop: 2 }}>
         <SidebarItem
-          squareCorners={squareCorners}
           indentMode={rowIndentMode}
           fullWidth
+          style={{
+            minHeight: LEFT_NAV.rowMinHeight,
+            paddingVertical: LEFT_NAV.rowPaddingVertical,
+          }}
           indent={isWeb ? treeIndent : 0}
-          style={squareRowStyle}
           onPress={() => {
             // Single click: navigation ONLY
             if (node?.sectionId && onSelectSection) {
@@ -527,7 +533,7 @@ export default function PhaseLeftPanel({
                 }}
                 style={{ marginRight: 6, padding: 2 }}
               >
-                <AnimatedChevron expanded={isExpanded} outline size={14} color={iconColor} />
+                <AnimatedChevron expanded={isExpanded} outline size={LEFT_NAV.chevronSize} color={iconColor} />
               </TouchableOpacity>
               <MicroPulse trigger={pulseTrigger}>
                 <Ionicons
@@ -541,7 +547,7 @@ export default function PhaseLeftPanel({
           )}
           label={node.name}
           labelWeight={nodeHasContent(node.sectionId || '', null) ? '700' : undefined}
-          labelStyle={isHovered ? { color: textColor } : null}
+          labelStyle={{ fontSize: LEFT_NAV.rowFontSize, ...(isHovered ? { color: textColor } : {}) }}
           right={() => (Boolean(node.loading) ? <Text style={styles.spMeta}>Laddar…</Text> : null)}
         />
 
@@ -804,14 +810,13 @@ export default function PhaseLeftPanel({
   return (
     <View style={styles.container}>
       <View style={styles.panelCard}>
-        {/* Project name header */}
-        {projectName && (
-          <View style={styles.projectHeader}>
-            <Text style={styles.projectName} numberOfLines={1}>
-              {projectName}
-            </Text>
-            <View style={styles.divider} />
-          </View>
+        {/* Projekt-header: nummer + namn, skede (ingen divider) */}
+        {(project || projectName) && (
+          <ProjectSidebarHeader
+            project={project}
+            projectName={projectName}
+            phaseKey={project?.phase}
+          />
         )}
 
         {/* Content wrapper - takes flex: 1 */}
@@ -854,10 +859,13 @@ export default function PhaseLeftPanel({
             <View key={section.id} style={styles.sectionContainer}>
               {/* Section header: hela raden klickbar – expand/collapse + välj sektion */}
               <SidebarItem
-                squareCorners={squareCorners}
                 indentMode={rowIndentMode}
                 fullWidth
-                style={squareRowStyle}
+                style={{
+                  minHeight: LEFT_NAV.rowMinHeightCompact,
+                  paddingVertical: LEFT_NAV.rowPaddingVertical,
+                  paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
+                }}
                 hovered={isHovered}
                 active={isActive}
                 onPress={() => {
@@ -872,9 +880,9 @@ export default function PhaseLeftPanel({
                 onHoverOut={isWeb ? () => setHoveredKey(null) : undefined}
                 left={() => (
                   <>
-                    <Ionicons
-                      name={isExpanded ? 'chevron-down-outline' : 'chevron-forward-outline'}
-                      size={14}
+                    <AnimatedChevron
+                      expanded={isExpanded}
+                      size={LEFT_NAV.chevronSize}
                       color={sectionIconColor}
                       style={{ marginRight: 6 }}
                     />
@@ -888,7 +896,10 @@ export default function PhaseLeftPanel({
                 )}
                 label={stripNumberPrefixForDisplay(section.name)}
                 labelWeight={sectionHasContent ? '700' : undefined}
-                labelStyle={isActive ? { color: LEFT_NAV.accent } : isHovered ? { color: sectionTextColor } : null}
+                labelStyle={{
+                  fontSize: LEFT_NAV.rowFontSize,
+                  ...(isActive ? { color: LEFT_NAV.accent } : isHovered ? { color: sectionTextColor } : {}),
+                }}
                 right={() =>
                   canEdit ? (
                     <View style={{ flexDirection: 'row', marginLeft: 8, gap: 4 }}>
@@ -939,13 +950,15 @@ export default function PhaseLeftPanel({
                       <View key={item.id}>
                         {/* Item: hela raden klickbar – vid undermeny: växla expand + välj; annars bara välj */}
                         <SidebarItem
-                          squareCorners={squareCorners}
                           indentMode={rowIndentMode}
                           fullWidth
-                          style={squareRowStyle}
+                          style={{
+                            minHeight: LEFT_NAV.rowMinHeight,
+                            paddingVertical: LEFT_NAV.rowPaddingVertical,
+                          }}
                           hovered={isItemHovered}
                           active={isItemActive}
-                          indent={isWeb ? 24 : 8}
+                          indent={LEFT_NAV.indentPerLevel}
                           onPress={() => {
                             if (hasNestedItems) {
                               toggleNestedStructure(section.id, item.id);
@@ -957,19 +970,16 @@ export default function PhaseLeftPanel({
                           onHoverOut={isWeb ? () => setHoveredKey(null) : undefined}
                           label={`• ${stripNumberPrefixForDisplay(item.name)}`}
                           labelWeight={nodeHasContent(section.id, item.id) ? '700' : undefined}
-                          labelStyle={
-                            isItemActive
-                              ? { color: LEFT_NAV.accent }
-                              : isItemHovered
-                                ? { color: itemTextColor }
-                                : null
-                          }
+                          labelStyle={{
+                            fontSize: LEFT_NAV.rowFontSize,
+                            ...(isItemActive ? { color: LEFT_NAV.accent } : isItemHovered ? { color: itemTextColor } : {}),
+                          }}
                           right={() => (
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                               {hasNestedItems ? (
                                 <Ionicons
                                   name={expandedNestedItems[`${section.id}.${item.id}`] ? 'chevron-down-outline' : 'chevron-forward-outline'}
-                                  size={14}
+                                  size={LEFT_NAV.chevronSize}
                                   color={isItemActive ? LEFT_NAV.accent : (isItemHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted)}
                                 />
                               ) : null}
@@ -1019,14 +1029,16 @@ export default function PhaseLeftPanel({
 
                               return (
                                 <SidebarItem
-                                  squareCorners={squareCorners}
                                   indentMode={rowIndentMode}
                                   fullWidth
-                                  style={squareRowStyle}
                                   key={subItem.id}
+                                  style={{
+                                    minHeight: LEFT_NAV.rowMinHeight,
+                                    paddingVertical: LEFT_NAV.rowPaddingVertical,
+                                  }}
                                   hovered={isSubHovered}
                                   active={isSubItemActive}
-                                  indent={isWeb ? 56 : 24}
+                                  indent={LEFT_NAV.indentPerLevel * 2}
                                   onPress={() => {
                                     if (onSelectItem) {
                                       onSelectItem(section.id, `${item.id}.${subItem.id}`);
@@ -1037,13 +1049,10 @@ export default function PhaseLeftPanel({
                                   label={`– ${stripNumberPrefixForDisplay(subItem.name)}`}
                                   muted
                                   labelWeight={isSubItemActive ? '700' : '500'}
-                                  labelStyle={
-                                    isSubItemActive
-                                      ? { color: LEFT_NAV.accent }
-                                      : isSubHovered
-                                        ? { color: subTextColor }
-                                        : null
-                                  }
+                                  labelStyle={{
+                                    fontSize: LEFT_NAV.rowFontSize,
+                                    ...(isSubItemActive ? { color: LEFT_NAV.accent } : isSubHovered ? { color: subTextColor } : {}),
+                                  }}
                                   right={() =>
                                     canEdit ? (
                                       <TouchableOpacity
@@ -1257,7 +1266,7 @@ export default function PhaseLeftPanel({
                               {hasNestedItems && (
                                 <Ionicons
                                   name={expandedNestedItems[`${section.id}.${item.id}`] ? 'chevron-down-outline' : 'chevron-forward-outline'}
-                                  size={14}
+                                  size={LEFT_NAV.chevronSize}
                                   color="#999"
                                 />
                               )}
@@ -1429,7 +1438,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     flexDirection: 'column',
-    backgroundColor: Platform.OS === 'web' ? '#f7f7f7' : 'transparent',
+    backgroundColor: Platform.OS === 'web' ? SIDEBAR_BG : 'transparent',
     padding: Platform.OS === 'web' ? 0 : 12,
     height: '100%',
     ...(Platform.OS === 'web'
@@ -1437,15 +1446,15 @@ const styles = StyleSheet.create({
           maxHeight: '100%',
           overflow: 'hidden',
           display: 'flex',
-          width: 320,
-          minWidth: 280,
+          width: SIDEBAR_PHASE_WIDTH,
+          minWidth: SIDEBAR_PHASE_WIDTH,
           flexShrink: 0,
         }
       : {}),
   },
   panelCard: {
     flex: 1,
-    backgroundColor: Platform.OS === 'web' ? '#f7f7f7' : '#fff',
+    backgroundColor: Platform.OS === 'web' ? SIDEBAR_BG : '#fff',
     borderRadius: Platform.OS === 'web' ? 0 : 12,
     borderWidth: Platform.OS === 'web' ? 0 : 1,
     borderColor: Platform.OS === 'web' ? 'transparent' : '#e6e6e6',
@@ -1454,26 +1463,9 @@ const styles = StyleSheet.create({
       ? {
           boxShadow: 'none',
           borderRightWidth: 1,
-          borderRightColor: '#ddd',
+          borderRightColor: SIDEBAR_BORDER_COLOR,
         }
       : { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 10, elevation: 2 }),
-  },
-  projectHeader: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Platform.OS === 'web' ? '#e0e0e0' : '#e6e6e6',
-    backgroundColor: Platform.OS === 'web' ? '#f7f7f7' : '#fff',
-    flexShrink: 0, // Prevent header from shrinking
-  },
-  projectName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#222',
-    marginBottom: 8
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#e6e6e6'
   },
   contentWrapper: {
     flex: 1, // Take remaining space (after header)

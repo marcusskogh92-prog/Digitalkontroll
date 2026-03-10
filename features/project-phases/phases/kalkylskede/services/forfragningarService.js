@@ -21,7 +21,7 @@ import {
     limit,
 } from 'firebase/firestore';
 
-import { auth, db } from '../../../../../components/firebase';
+import { auth, db, fetchByggdelar } from '../../../../../components/firebase';
 
 function requireIds(companyId, projectId) {
   const cid = String(companyId || '').trim();
@@ -30,7 +30,8 @@ function requireIds(companyId, projectId) {
   return { cid, pid };
 }
 
-export const RFQ_PACKAGE_STATUSES = ['Ej skickad', 'Skickad', 'Besvarad'];
+export const RFQ_PACKAGE_STATUSES = ['Ej skickad', 'Skickad', 'Väntar svar', 'Bekräftad', 'Avböjt'];
+export const RFQ_ATERKOPPLING_OPTIONS = ['Ej svar', 'Lämnar pris', 'Lämnar ej pris', 'Avböjt', 'Osäker'];
 
 const DEFAULT_BUILD_PARTS = [
   { nr: '6', name: 'Rivning' },
@@ -194,17 +195,34 @@ export async function seedInquiryBuildParts(companyId, projectId) {
   const { cid, pid } = requireIds(companyId, projectId);
   const colRef = getRfqByggdelarCollectionRef(cid, pid);
 
-  console.log('Seeding build parts for inquiry', pid);
   const existingSnap = await getDocs(query(colRef, limit(1)));
   if (!existingSnap.empty) {
-    console.log('Build parts already exist – skipping seed');
     return { created: 0, skipped: true };
   }
 
+  let sourceList = [];
+  try {
+    const companyByggdelar = await fetchByggdelar(cid);
+    if (Array.isArray(companyByggdelar) && companyByggdelar.length > 0) {
+      sourceList = companyByggdelar.map((b) => ({
+        nr: String(b.code ?? '').trim(),
+        name: String(b.name ?? '').trim(),
+      }));
+    }
+  } catch (_e) {}
+  if (sourceList.length === 0) {
+    sourceList = DEFAULT_BUILD_PARTS.map((item) => ({
+      nr: String(item.nr || '').trim(),
+      name: String(item.name || '').trim(),
+    }));
+  }
+
+  const { uid, name: userName } = nowUserMeta();
   const batch = writeBatch(db);
-  DEFAULT_BUILD_PARTS.forEach((item) => {
+  sourceList.forEach((item) => {
     const nr = String(item.nr || '').trim();
     const name = String(item.name || '').trim();
+    if (!nr && !name) return;
     const category = deriveCategory(name);
     const docRef = doc(colRef);
     batch.set(docRef, {
@@ -214,6 +232,11 @@ export async function seedInquiryBuildParts(companyId, projectId) {
       category,
       status: 'UTKAST',
       createdAt: serverTimestamp(),
+      createdByUid: uid,
+      createdByName: userName,
+      updatedAt: serverTimestamp(),
+      updatedByUid: uid,
+      updatedByName: userName,
       label: name,
       code: nr,
       group: category,
@@ -223,7 +246,7 @@ export async function seedInquiryBuildParts(companyId, projectId) {
   });
 
   await batch.commit();
-  return { created: DEFAULT_BUILD_PARTS.length, skipped: false };
+  return { created: sourceList.length, skipped: false };
 }
 
 export async function updateRfqByggdel(companyId, projectId, byggdelId, patch) {
@@ -287,6 +310,7 @@ export async function createRfqPackage(companyId, projectId, data) {
 
   const statusCandidate = String(data?.status || 'Ej skickad').trim();
   const status = RFQ_PACKAGE_STATUSES.includes(statusCandidate) ? statusCandidate : 'Ej skickad';
+  const aterkoppling = String(data?.aterkoppling || '').trim() || null;
 
   const { uid, name } = nowUserMeta();
   const payload = {
@@ -298,6 +322,7 @@ export async function createRfqPackage(companyId, projectId, data) {
     contactName,
 
     status,
+    aterkoppling,
 
     sharePointFolderPath: String(data?.sharePointFolderPath || '').trim() || null,
 
@@ -332,14 +357,15 @@ export async function updateRfqPackage(companyId, projectId, packageId, patch) {
   };
 
   if (Object.prototype.hasOwnProperty.call(next, 'status')) {
-    const statusCandidate = String(next.status || '').trim();
+    let statusCandidate = String(next.status || '').trim();
+    if (statusCandidate === 'Besvarad') statusCandidate = 'Bekräftad'; // backward compat
     next.status = RFQ_PACKAGE_STATUSES.includes(statusCandidate) ? statusCandidate : 'Ej skickad';
 
     // Auto-stamp when reaching certain statuses.
     if (next.status === 'Skickad') {
       if (!Object.prototype.hasOwnProperty.call(next, 'sentAt')) next.sentAt = serverTimestamp();
     }
-    if (next.status === 'Besvarad') {
+    if (['Bekräftad', 'Avböjt'].includes(next.status)) {
       if (!Object.prototype.hasOwnProperty.call(next, 'answeredAt')) next.answeredAt = serverTimestamp();
     }
   }
@@ -351,6 +377,10 @@ export async function updateRfqPackage(companyId, projectId, packageId, patch) {
   if (Object.prototype.hasOwnProperty.call(next, 'contactName')) {
     const nextName = String(next.contactName || '').trim();
     next.contactName = nextName || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(next, 'aterkoppling')) {
+    const val = String(next.aterkoppling || '').trim();
+    next.aterkoppling = val || null;
   }
 
   await updateDoc(doc(colRef, pid), next);

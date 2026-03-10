@@ -13,18 +13,18 @@ import ProjektstatusView from './items/Projektstatus/ProjektstatusView';
 import RiskerView from './items/Risker/RiskerView';
 import OversiktDashboard from './OversiktDashboard';
 
-// New "Översikt 01–04" views (SharePoint filmappar)
-import FragaSvarView from './items/FragaSvar/FragaSvarView';
+// New "Översikt 01–05" views (SharePoint filmappar)
+import ChecklistaView from './items/Checklista/ChecklistaView';
 import OrganisationRollerView from './items/OrganisationRoller/OrganisationRollerView';
 import ProjektinformationView from './items/Projektinformation/ProjektinformationView';
 import TidsplanViktigaDatumView from './items/TidsplanViktigaDatum/TidsplanViktigaDatumView';
 
 const ITEM_COMPONENTS = {
-  // SharePoint filmappar (01–04)
+  // SharePoint filmappar (01–04; FrågaSvar är egen huvudflik)
+  checklista: ChecklistaView,
   projektinfo: ProjektinformationView,
   'organisation-roller': OrganisationRollerView,
   'tidsplan-viktiga-datum': TidsplanViktigaDatumView,
-  'status-beslut': FragaSvarView,
 
   // Existing oversikt items
   projektstatus: ProjektstatusView,
@@ -35,10 +35,10 @@ const ITEM_COMPONENTS = {
 
 export default function OversiktSection({ projectId, companyId, project, activeItem, navigation, navigationParams, hidePageHeader = false, onSelectItem = null }) {
   const bgEnabledItemIds = new Set([
+    'checklista',
     'projektinfo',
     'organisation-roller',
     'tidsplan-viktiga-datum',
-    'status-beslut',
   ]);
 
   const shouldUseBackground = !activeItem || bgEnabledItemIds.has(String(activeItem || ''));
@@ -53,6 +53,7 @@ export default function OversiktSection({ projectId, companyId, project, activeI
             companyId={companyId}
             project={project}
             onNavigate={(itemId, params) => onSelectItem?.('oversikt', itemId, params)}
+            onNavigateToFragaSvar={onSelectItem ? () => onSelectItem('fragaSvar', 'status-beslut', null) : undefined}
           />
         </ProjectBackgroundWrapper>
       </View>

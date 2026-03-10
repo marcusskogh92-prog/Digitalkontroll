@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import { HomeHeader } from '../../components/common/HomeHeader';
 import ContextMenu from '../../components/ContextMenu';
-import { auth, deleteCompanyContact, fetchCompanyProfile, updateCompanyContact } from '../../components/firebase';
+import { auth, deleteCompanyContact, ensureCompaniesFromKunderAndLeverantorer, fetchCompanyProfile, updateCompanyContact } from '../../components/firebase';
 import MainLayout from '../../components/MainLayout';
 import { useSharePointStatus } from '../../hooks/useSharePointStatus';
 import KundContacts from './KundContacts';
@@ -284,6 +284,7 @@ export default function KunderView({
     setLoading(true);
     setError('');
     try {
+      await ensureCompaniesFromKunderAndLeverantorer(companyId).catch(() => {});
       const data = await fetchCustomers(companyId);
       setCustomers(data ?? []);
     } catch (e) {
