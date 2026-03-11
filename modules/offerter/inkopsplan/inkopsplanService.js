@@ -563,6 +563,19 @@ export async function setInkopsplanRowSupplierPersonalizedInquiry({ companyId, p
   });
 }
 
+/** Uppdaterar kontaktperson för en leverantör på en rad. */
+export async function setInkopsplanRowSupplierContact({ companyId, projectId, rowId, supplierKey, contact }) {
+  const patch = {
+    contactId: contact != null ? safeText(contact?.id) || null : null,
+    contactName: contact != null ? safeText(contact?.name) || null : null,
+    mobile: contact != null ? safeText(contact?.mobile) || null : null,
+    phone: contact != null ? safeText(contact?.phone) || null : null,
+    email: contact != null ? safeText(contact?.email) || null : null,
+  };
+  if (contact != null && contact?.role != null) patch.role = safeText(contact.role) || null;
+  await patchInkopsplanRowSupplier({ companyId, projectId, rowId, supplierKey, patch });
+}
+
 export async function removeInkopsplanRowSupplier({ companyId, projectId, rowId, supplierKey }) {
   const { cid, pid } = requireIds(companyId, projectId);
   const rid = safeText(rowId);

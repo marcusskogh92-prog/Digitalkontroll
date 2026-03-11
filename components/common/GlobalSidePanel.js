@@ -1,15 +1,25 @@
 /**
  * Context navigation panel. Visas till höger om IconRail.
  * Collapsible, slide 180ms ease. Valfritt resizable via leftWidth/setLeftWidth/panResponder.
+ * 2026: smal, enhetlig divider + toggle som matchar rail.
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { getLeftPanelBackgroundStyle, PANEL_DIVIDER } from '../../constants/backgroundTheme';
 import { GLOBAL_SIDE_PANEL } from '../../constants/iconRailTheme';
+import { CONTEXT_PANEL_BG, CONTEXT_PANEL_BORDER_COLOR } from './layoutConstants';
 
-const RESIZE_HANDLE_WIDTH = 6;
+const RESIZE_HANDLE_WIDTH = 4;
+const COLLAPSE_ZONE_WIDTH = 10;
+const TAB_BUTTON_WIDTH = 20;
+const TAB_BUTTON_HEIGHT = 36;
+const TAB_STICK_OUT = 18;
+const DIVIDER_BG = 'rgba(15, 23, 42, 0.06)';
+const PILL_BG = '#334155';
+const PILL_BG_HOVER = '#475569';
+const CHEVRON_COLOR = '#fff';
 
 const styles = StyleSheet.create({
   wrapper: {
@@ -18,12 +28,13 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     minHeight: 0,
     overflow: 'hidden',
+    ...(Platform.OS === 'web' ? { overflow: 'visible' } : {}),
   },
   panel: {
-    backgroundColor: GLOBAL_SIDE_PANEL.bg,
+    backgroundColor: Platform.OS === 'web' ? CONTEXT_PANEL_BG : GLOBAL_SIDE_PANEL.bg,
     minHeight: 0,
     overflow: 'hidden',
-    ...(Platform.OS === 'web' ? { ...PANEL_DIVIDER } : {}),
+    ...(Platform.OS === 'web' ? { borderRightWidth: 1, borderRightColor: CONTEXT_PANEL_BORDER_COLOR } : {}),
   },
   panelContent: {
     flex: 1,
@@ -33,6 +44,21 @@ const styles = StyleSheet.create({
     minHeight: 0,
     alignSelf: 'stretch',
   },
+  dividerStrip: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    alignSelf: 'stretch',
+    backgroundColor: DIVIDER_BG,
+    ...(Platform.OS === 'web' ? { overflow: 'visible', zIndex: 10 } : {}),
+  },
+  dividerStripExpanded: {
+    width: RESIZE_HANDLE_WIDTH + COLLAPSE_ZONE_WIDTH,
+    minWidth: RESIZE_HANDLE_WIDTH + COLLAPSE_ZONE_WIDTH,
+  },
+  dividerStripCollapsed: {
+    width: COLLAPSE_ZONE_WIDTH,
+    minWidth: COLLAPSE_ZONE_WIDTH,
+  },
   resizeHandle: {
     width: RESIZE_HANDLE_WIDTH,
     minWidth: RESIZE_HANDLE_WIDTH,
@@ -40,13 +66,26 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     ...(Platform.OS === 'web' ? { cursor: 'col-resize' } : {}),
   },
-  collapseButton: {
-    width: 24,
-    alignSelf: 'stretch',
+  collapseZone: {
+    width: COLLAPSE_ZONE_WIDTH,
+    minWidth: COLLAPSE_ZONE_WIDTH,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: GLOBAL_SIDE_PANEL.borderColor,
-    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+    ...(Platform.OS === 'web' ? { overflow: 'visible' } : {}),
+  },
+  collapseButton: {
+    width: TAB_BUTTON_WIDTH,
+    height: TAB_BUTTON_HEIGHT,
+    borderRadius: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: PILL_BG,
+    marginRight: -TAB_STICK_OUT,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.15)', zIndex: 11 } : {}),
+  },
+  collapseButtonHover: {
+    backgroundColor: PILL_BG_HOVER,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 6px rgba(0,0,0,0.2)' } : {}),
   },
 });
 
@@ -86,6 +125,12 @@ export function GlobalSidePanel({
   }, [collapsed, visible, effectiveExpandedWidth, widthAnim, opacityAnim]);
 
   const showResize = !collapsed && visible && setLeftWidth && (resizeHandlers || panResponder);
+  const [collapseHover, setCollapseHover] = useState(false);
+
+  const collapseButtonStyle = [
+    styles.collapseButton,
+    Platform.OS === 'web' && collapseHover && styles.collapseButtonHover,
+  ];
 
   return (
     <View style={styles.wrapper}>
@@ -103,21 +148,29 @@ export function GlobalSidePanel({
           {children}
         </Animated.View>
       </Animated.View>
-      {showResize && (
-        <View style={styles.resizeHandle} {...(resizeHandlers || panResponder?.panHandlers || {})} />
-      )}
-      {visible && showCollapseButton && (
-        <TouchableOpacity
-          onPress={() => onCollapseChange?.(!collapsed)}
-          style={styles.collapseButton}
-          accessibilityLabel={collapsed ? 'Öppna panel' : 'Stäng panel'}
-        >
-          <Ionicons
-            name={collapsed ? 'chevron-forward' : 'chevron-back'}
-            size={18}
-            color="#64748b"
-          />
-        </TouchableOpacity>
+      {(showResize || (visible && showCollapseButton)) && (
+        <View style={[styles.dividerStrip, collapsed ? styles.dividerStripCollapsed : styles.dividerStripExpanded]}>
+          {showResize && (
+            <View style={styles.resizeHandle} {...(resizeHandlers || panResponder?.panHandlers || {})} />
+          )}
+          {visible && showCollapseButton && (
+            <View style={styles.collapseZone}>
+              {Platform.OS !== 'web' && (
+                <TouchableOpacity
+                  onPress={() => onCollapseChange?.(!collapsed)}
+                  style={collapseButtonStyle}
+                  accessibilityLabel={collapsed ? 'Öppna panel' : 'Stäng panel'}
+                >
+                <Ionicons
+                  name={collapsed ? 'chevron-forward' : 'chevron-back'}
+                  size={16}
+                  color={CHEVRON_COLOR}
+                />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+        </View>
       )}
     </View>
   );

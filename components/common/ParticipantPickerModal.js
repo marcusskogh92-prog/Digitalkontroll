@@ -412,7 +412,7 @@ export default function ParticipantPickerModal({
         <View style={styles.header}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
             <View style={styles.headerIconWrap}>
-              <Ionicons name="person-add-outline" size={D.headerNeutralCompactIconPx || 14} color="#fff" />
+              <Ionicons name="person-add-outline" size={D.headerNeutralCompactIconPx || 14} color={D.headerNeutralTextColor} />
             </View>
             <View style={{ minWidth: 0, flex: 1 }}>
               <Text style={styles.title} numberOfLines={1}>
@@ -430,7 +430,7 @@ export default function ParticipantPickerModal({
               Platform.OS === 'web' ? { cursor: 'pointer' } : null,
             ]}
           >
-            <Ionicons name="close" size={D.headerNeutralCompactCloseIconPx || 18} color="#fff" />
+            <Ionicons name="close" size={D.headerNeutralCompactCloseIconPx || 18} color={D.headerNeutralCloseIconColor} />
           </Pressable>
         </View>
 
@@ -791,7 +791,7 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 6,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import ConfirmModal from '../../../components/common/Modals/ConfirmModal';
 import ContextMenu from '../../../components/ContextMenu';
 import CreateInkopsplanModal from './components/CreateInkopsplanModal';
 import InkopsplanTable from './components/InkopsplanTable';
@@ -17,22 +18,6 @@ function safeText(v) {
 
 function isWeb() {
   return Platform.OS === 'web';
-}
-
-function PrimaryButton({ label, onPress, disabled }) {
-  return (
-    <Pressable
-      disabled={disabled}
-      onPress={onPress}
-      style={({ hovered, pressed }) => [
-        styles.primaryBtn,
-        (hovered || pressed) && !disabled && styles.primaryBtnHover,
-        disabled && { opacity: 0.5 },
-      ]}
-    >
-      <Text style={styles.primaryBtnText} numberOfLines={1}>{label}</Text>
-    </Pressable>
-  );
 }
 
 export default function InkopsplanView({ companyId, projectId }) {
@@ -52,6 +37,8 @@ export default function InkopsplanView({ companyId, projectId }) {
   const [levMenu, setLevMenu] = useState(null);
   const [inquiryModalRowId, setInquiryModalRowId] = useState(null);
   const [generatingInquiryDraft, setGeneratingInquiryDraft] = useState(false);
+  const [deleteRowConfirm, setDeleteRowConfirm] = useState({ visible: false, row: null });
+  const [deleteRowBusyConfirm, setDeleteRowBusyConfirm] = useState(false);
   const upperScrollRef = useRef(null);
   const inkopsplanTableRef = useRef(null);
 
@@ -266,11 +253,6 @@ export default function InkopsplanView({ companyId, projectId }) {
             En strukturerad inköpsplan som genereras från företagets register.
           </Text>
         </View>
-        <PrimaryButton
-          label={topActionLabel}
-          onPress={() => setIsModalOpen(true)}
-          disabled={!companyId || !projectId}
-        />
       </View>
 
       {loading ? (
@@ -279,30 +261,52 @@ export default function InkopsplanView({ companyId, projectId }) {
         </View>
       ) : (
         <View style={styles.singlePanel}>
+          {/* Ämnesrad – ljusgrå för att skilja från vit tabell */}
           <View style={styles.upperPanelToolbar}>
             <View style={styles.upperPanelToolbarLeft}>
               <Text style={styles.upperPanelToolbarTitle}>Inköp</Text>
-              <Pressable
-                onPress={addNewManualRow}
-                style={({ hovered, pressed }) => [
-                  styles.toolbarIconBtn,
-                  styles.toolbarIconBtnRound,
-                  (hovered || pressed) && styles.toolbarIconBtnHover,
-                ]}
-                accessibilityLabel="Lägg till rad"
-              >
-                <Text style={styles.toolbarIconBtnText}>+</Text>
-              </Pressable>
+              <View style={styles.upperPanelToolbarDivider} />
+            </View>
+            <View style={styles.upperPanelToolbarActions}>
               <Pressable
                 onPress={saveManualRow}
                 style={({ hovered, pressed }) => [
-                  styles.toolbarIconBtn,
-                  styles.toolbarIconBtnRound,
-                  (hovered || pressed) && styles.toolbarIconBtnHover,
+                  styles.toolbarActionBtn,
+                  styles.toolbarIconOnlyBtn,
+                  (hovered || pressed) && styles.toolbarActionBtnHover,
                 ]}
                 accessibilityLabel="Spara"
+                {...(isWeb() ? { title: 'Spara' } : {})}
               >
-                <Ionicons name="save-outline" size={18} color="#0F172A" />
+                <Ionicons name="save-outline" size={18} color="#334155" />
+              </Pressable>
+              <Pressable
+                onPress={() => setIsModalOpen(true)}
+                disabled={!companyId || !projectId}
+                style={({ hovered, pressed }) => [
+                  styles.toolbarActionBtn,
+                  styles.toolbarActionBtnSmall,
+                  (hovered || pressed) && styles.toolbarActionBtnHover,
+                  (!companyId || !projectId) && { opacity: 0.5 },
+                ]}
+                accessibilityLabel="Lägg till flera rader från register"
+                {...(isWeb() ? { title: 'Lägg till flera rader från företagets register (byggdelar, konton, kategorier)' } : {})}
+              >
+                <Ionicons name="list" size={14} color="#334155" style={{ marginRight: 5 }} />
+                <Text style={styles.toolbarActionBtnTextSmall}>Från register</Text>
+              </Pressable>
+              <Pressable
+                onPress={addNewManualRow}
+                style={({ hovered, pressed }) => [
+                  styles.toolbarActionBtn,
+                  styles.toolbarActionBtnSmall,
+                  (hovered || pressed) && styles.toolbarActionBtnHover,
+                ]}
+                accessibilityLabel="Lägg till en rad"
+                {...(isWeb() ? { title: 'Lägg till en ny rad' } : {})}
+              >
+                <Ionicons name="add" size={14} color="#334155" style={{ marginRight: 5 }} />
+                <Text style={styles.toolbarActionBtnTextSmall}>Lägg till rad</Text>
               </Pressable>
               <Pressable
                 onPress={() => {
@@ -316,12 +320,25 @@ export default function InkopsplanView({ companyId, projectId }) {
                 }}
                 style={({ hovered, pressed }) => [
                   styles.toolbarGenerellBtn,
+                  styles.toolbarGenerellBtnSmall,
                   (hovered || pressed) && styles.toolbarGenerellBtnHover,
                 ]}
                 accessibilityLabel="Generell förfrågan"
               >
-                <Ionicons name="sparkles" size={16} color="#166534" style={{ marginRight: 4 }} />
-                <Text style={styles.toolbarGenerellBtnText}>Generell förfrågan</Text>
+                <Ionicons name="sparkles" size={14} color="#fff" style={{ marginRight: 5 }} />
+                <Text style={styles.toolbarGenerellBtnTextSmall}>Generell förfrågan</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => inkopsplanTableRef.current?.openColumnPicker?.()}
+                style={({ hovered, pressed }) => [
+                  styles.toolbarActionBtn,
+                  styles.toolbarIconOnlyBtn,
+                  (hovered || pressed) && styles.toolbarActionBtnHover,
+                ]}
+                accessibilityLabel="Välj kolumner"
+                {...(isWeb() ? { title: 'Välj vilka kolumner som ska visas' } : {})}
+              >
+                <Ionicons name="filter-outline" size={18} color="#334155" />
               </Pressable>
             </View>
           </View>
@@ -415,43 +432,49 @@ export default function InkopsplanView({ companyId, projectId }) {
           ]}
           onSelect={(item) => {
             const rowToDelete = inkopMenu?.row;
-            const rowIdToDelete = rowToDelete?.id;
             setInkopMenu(null);
-            if (item?.key === 'radera' && rowIdToDelete && companyId && projectId) {
-              setSelectedRow(rowToDelete);
-              const cid = companyId;
-              const pid = projectId;
-              const rid = rowIdToDelete;
-              setTimeout(() => {
-                Alert.alert(
-                  'Radera inköpsrad',
-                  'Är du säker på att du vill radera denna rad?',
-                  [
-                    { text: 'Avbryt', style: 'cancel' },
-                    {
-                      text: 'Radera',
-                      style: 'destructive',
-                      onPress: async () => {
-                        setDeleteRowBusy(true);
-                        try {
-                          await deleteInkopsplanRow({ companyId: cid, projectId: pid, rowId: rid });
-                          setSelectedRow(null);
-                          triggerRefresh();
-                        } catch (e) {
-                          Alert.alert('Kunde inte radera', e?.message || 'Okänt fel');
-                        } finally {
-                          setDeleteRowBusy(false);
-                        }
-                      },
-                    },
-                  ],
-                );
-              }, 0);
+            if (item?.key === 'radera' && rowToDelete != null) {
+              setDeleteRowConfirm({ visible: true, row: rowToDelete });
             }
           }}
           compact
         />
       )}
+
+      <ConfirmModal
+        visible={deleteRowConfirm.visible}
+        title="Radera inköpsrad"
+        message={
+          !deleteRowConfirm.row?.id
+            ? 'Denna rad har inte sparats än och kan inte raderas. Spara raden först (klicka Spara) om du vill lägga till den, eller avbryt redigeringen.'
+            : 'Är du säker på att du vill radera denna rad? Leverantörer kopplade till raden påverkas inte.'
+        }
+        danger
+        confirmLabel="Radera"
+        busy={deleteRowBusyConfirm}
+        confirmDisabled={!deleteRowConfirm.row?.id}
+        hideKeyboardHints
+        onConfirm={async () => {
+          const r = deleteRowConfirm.row;
+          const rid = r?.id;
+          if (!rid || !companyId || !projectId) {
+            setDeleteRowConfirm({ visible: false, row: null });
+            return;
+          }
+          setDeleteRowBusyConfirm(true);
+          try {
+            await deleteInkopsplanRow({ companyId, projectId, rowId: rid });
+            setSelectedRow(null);
+            setDeleteRowConfirm({ visible: false, row: null });
+            triggerRefresh();
+          } catch (e) {
+            Alert.alert('Kunde inte radera', e?.message || 'Okänt fel');
+          } finally {
+            setDeleteRowBusyConfirm(false);
+          }
+        }}
+        onCancel={() => setDeleteRowConfirm({ visible: false, row: null })}
+      />
 
       {levMenu && (
         <ContextMenu
@@ -530,25 +553,6 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontWeight: '400',
   },
-  primaryBtn: {
-    height: 32,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: '#0F172A',
-    borderWidth: 1,
-    borderColor: '#0F172A',
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...(isWeb() ? { cursor: 'pointer' } : {}),
-  },
-  primaryBtnHover: {
-    transform: [{ translateY: -1 }],
-  },
-  primaryBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
   loading: {
     flex: 1,
     minHeight: 0,
@@ -568,67 +572,102 @@ const styles = StyleSheet.create({
     minHeight: 0,
     flexDirection: 'column',
   },
+  /** Ämnesrad – lätt grå, skiljer från tabellhuvud (inköpsrad) som är mörkare */
   upperPanelToolbar: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 44,
+    minHeight: 40,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    backgroundColor: '#F8FAFC',
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    backgroundColor: '#fff',
+    borderBottomColor: '#E2E8F0',
+    gap: 12,
   },
   upperPanelToolbarLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
+    flexShrink: 0,
   },
   upperPanelToolbarTitle: {
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: '700',
-    color: '#0F172A',
+    color: '#0f172a',
   },
-  toolbarIconBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+  upperPanelToolbarDivider: {
+    width: 1,
+    alignSelf: 'stretch',
+    minHeight: 20,
+    backgroundColor: '#CBD5E1',
+  },
+  upperPanelToolbarActions: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  toolbarActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 32,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
     ...(isWeb() ? { cursor: 'pointer' } : {}),
   },
-  toolbarIconBtnRound: {
-    borderRadius: 16,
+  toolbarActionBtnSmall: {
+    height: 28,
+    paddingHorizontal: 8,
   },
-  toolbarIconBtnHover: {
+  toolbarActionBtnHover: {
     backgroundColor: '#E2E8F0',
   },
-  toolbarIconBtnText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#0F172A',
-    lineHeight: 20,
+  toolbarIconOnlyBtn: {
+    paddingHorizontal: 10,
+    minWidth: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  toolbarActionBtnText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#334155',
+  },
+  toolbarActionBtnTextSmall: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#334155',
   },
   toolbarGenerellBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     height: 32,
     paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: '#DCFCE7',
+    borderRadius: 6,
+    backgroundColor: '#16A34A',
     borderWidth: 1,
-    borderColor: '#22C55E',
+    borderColor: '#15803D',
     ...(isWeb() ? { cursor: 'pointer' } : {}),
   },
+  toolbarGenerellBtnSmall: {
+    height: 28,
+    paddingHorizontal: 8,
+  },
   toolbarGenerellBtnHover: {
-    backgroundColor: '#BBF7D0',
+    backgroundColor: '#15803D',
   },
   toolbarGenerellBtnText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#166534',
+    color: '#fff',
+  },
+  toolbarGenerellBtnTextSmall: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#fff',
   },
   scroll: {
     flex: 1,

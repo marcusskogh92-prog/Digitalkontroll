@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Platform, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { HomeHeader } from '../components/common/HomeHeader';
 import ContextMenu from '../components/ContextMenu';
@@ -22,6 +22,7 @@ import {
     updateCompanyControlTypeFolder,
     updateCompanyMall,
 } from '../components/firebase';
+import ConfirmModal from '../components/common/Modals/ConfirmModal';
 import MainLayout from '../components/MainLayout';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 
@@ -145,7 +146,8 @@ export default function ManageControlTypes({ route, navigation }) {
   // Loading and feedback states
   const [loadingFolders, setLoadingFolders] = useState(false);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
-  const [message, setMessage] = useState({ type: null, text: '' }); // 'success' | 'error' | null
+  const [message, setMessage] = useState({ type: null, text: '' });
+  const [deleteControlTypeConfirm, setDeleteControlTypeConfirm] = useState({ visible: false, ct: null, label: '' });
 
   // Header is handled globally in App.js (web breadcrumb + logos).
 
@@ -370,6 +372,41 @@ export default function ManageControlTypes({ route, navigation }) {
     return () => { mounted = false; };
   }, [companyId, selectedControlType, foldersEnabled]);
 
+  const runDeleteControlTypeConfirmed = useCallback(async () => {
+    const ct = deleteControlTypeConfirm?.ct;
+    const label = deleteControlTypeConfirm?.label ?? '';
+    const cid = String(companyId || '').trim();
+    if (!ct || !cid) {
+      setDeleteControlTypeConfirm({ visible: false, ct: null, label: '' });
+      return;
+    }
+    const isBuiltin = !!ct.builtin;
+    const ctId = String(ct.id || '').trim();
+    const ctKey = String(ct.key || '').trim();
+    const ctName = String(ct.name || ct.key || '').trim();
+    setDeleteControlTypeConfirm((prev) => ({ ...prev, visible: false }));
+    try {
+      if (isBuiltin || !ctId) {
+        await updateCompanyControlType({ key: ctKey || ctName, hidden: true }, cid);
+        setMessage({ type: 'success', text: `Kontrolltypen "${ctName}" har döljts.` });
+      } else {
+        await deleteCompanyControlType({ id: ctId }, cid);
+        setMessage({ type: 'success', text: `Kontrolltypen "${ctName}" har raderats.` });
+      }
+      const list = await fetchCompanyControlTypes(cid);
+      setControlTypes(Array.isArray(list) && list.length > 0 ? list : DEFAULT_CONTROL_TYPES);
+      if (String(selectedControlType || '').trim() === label) setSelectedControlType('');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('dkControlTypesUpdated', { detail: { companyId: cid } }));
+      }
+      setTimeout(() => setMessage({ type: null, text: '' }), 3000);
+    } catch (e) {
+      const errorMsg = String(e?.message || e || 'Ett fel uppstod');
+      Alert.alert('Fel', `Kunde inte ${isBuiltin ? 'dölja' : 'radera'} kontrolltypen: ${errorMsg}`);
+      setMessage({ type: 'error', text: `Kunde inte ${isBuiltin ? 'dölja' : 'radera'} kontrolltypen: ${errorMsg}` });
+      setTimeout(() => setMessage({ type: null, text: '' }), 5000);
+    }
+  }, [deleteControlTypeConfirm?.ct, deleteControlTypeConfirm?.label, companyId, selectedControlType]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return undefined;
@@ -1180,69 +1217,14 @@ export default function ManageControlTypes({ route, navigation }) {
                                   <Ionicons name="create-outline" size={16} color="#1976D2" />
                                 </TouchableOpacity>
                                 <TouchableOpacity
-                                  onPress={async (e) => {
+                                  onPress={(e) => {
                                     e.stopPropagation();
                                     const cid = String(companyId || '').trim();
                                     if (!cid) {
                                       Alert.alert('Fel', 'Inget företag är valt.');
                                       return;
                                     }
-                                    
-                                    const isBuiltin = !!ct.builtin;
-                                    const ctId = String(ct.id || '').trim();
-                                    const ctKey = String(ct.key || '').trim();
-                                    const ctName = String(ct.name || ct.key || '').trim();
-                                    
-                                    const confirmMsg = isBuiltin
-                                      ? `Dölja kontrolltypen "${ctName}"?\n\nInbyggda kontrolltyper kan inte raderas, men kan döljas för detta företag.`
-                                      : `Radera kontrolltypen "${ctName}"?\n\nDetta går inte att ångra.`;
-                                    
-                                    const confirmed = (typeof window !== 'undefined' && window.confirm) 
-                                      ? window.confirm(confirmMsg)
-                                      : await new Promise((resolve) => {
-                                          Alert.alert(
-                                            isBuiltin ? 'Dölj kontrolltyp' : 'Radera kontrolltyp',
-                                            confirmMsg,
-                                            [
-                                              { text: 'Avbryt', style: 'cancel', onPress: () => resolve(false) },
-                                              { text: isBuiltin ? 'Dölj' : 'Radera', style: 'destructive', onPress: () => resolve(true) },
-                                            ]
-                                          );
-                                        });
-                                    
-                                    if (!confirmed) return;
-                                    
-                                    try {
-                                      if (isBuiltin || !ctId) {
-                                        // För inbyggda kontrolltyper, dölj dem istället för att radera
-                                        await updateCompanyControlType({ key: ctKey || ctName, hidden: true }, cid);
-                                        setMessage({ type: 'success', text: `Kontrolltypen "${ctName}" har döljts.` });
-                                      } else {
-                                        await deleteCompanyControlType({ id: ctId }, cid);
-                                        setMessage({ type: 'success', text: `Kontrolltypen "${ctName}" har raderats.` });
-                                      }
-                                      
-                                      // Refresh control types list
-                                      const list = await fetchCompanyControlTypes(cid);
-                                      setControlTypes(Array.isArray(list) && list.length > 0 ? list : DEFAULT_CONTROL_TYPES);
-                                      
-                                      // If deleted control type was selected, clear selection
-                                      if (String(selectedControlType || '').trim() === label) {
-                                        setSelectedControlType('');
-                                      }
-                                      
-                                      // Trigger update event for sidebar
-                                      if (typeof window !== 'undefined') {
-                                        window.dispatchEvent(new CustomEvent('dkControlTypesUpdated', { detail: { companyId: cid } }));
-                                      }
-                                      
-                                      setTimeout(() => setMessage({ type: null, text: '' }), 3000);
-                                    } catch (e) {
-                                      const errorMsg = String(e?.message || e || 'Ett fel uppstod');
-                                      Alert.alert('Fel', `Kunde inte ${isBuiltin ? 'dölja' : 'radera'} kontrolltypen: ${errorMsg}`);
-                                      setMessage({ type: 'error', text: `Kunde inte ${isBuiltin ? 'dölja' : 'radera'} kontrolltypen: ${errorMsg}` });
-                                      setTimeout(() => setMessage({ type: null, text: '' }), 5000);
-                                    }
+                                    setDeleteControlTypeConfirm({ visible: true, ct, label });
                                   }}
                                   style={{ padding: 4 }}
                                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -2078,6 +2060,19 @@ export default function ManageControlTypes({ route, navigation }) {
               </View>
             </View>
           )}
+
+          <ConfirmModal
+            visible={!!deleteControlTypeConfirm?.visible}
+            title={deleteControlTypeConfirm?.ct ? (!!deleteControlTypeConfirm.ct.builtin ? 'Dölj kontrolltyp' : 'Radera kontrolltyp') : ''}
+            message={deleteControlTypeConfirm?.ct ? (!!deleteControlTypeConfirm.ct.builtin
+              ? `Dölja kontrolltypen "${String(deleteControlTypeConfirm.ct.name || deleteControlTypeConfirm.ct.key || '')}"?\n\nInbyggda kontrolltyper kan inte raderas, men kan döljas för detta företag.`
+              : `Radera kontrolltypen "${String(deleteControlTypeConfirm.ct.name || deleteControlTypeConfirm.ct.key || '')}"?\n\nDetta går inte att ångra.`) : ''}
+            danger
+            confirmLabel={deleteControlTypeConfirm?.ct?.builtin ? 'Dölj' : 'Radera'}
+            hideKeyboardHints
+            onConfirm={runDeleteControlTypeConfirmed}
+            onCancel={() => setDeleteControlTypeConfirm({ visible: false, ct: null, label: '' })}
+          />
       </MainLayout>
     );
   }

@@ -293,7 +293,7 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     backgroundColor: '#fff',
   },
-  mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
+  mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: D.buttonCloseBg, borderWidth: 0 },
   addModalLabel: { fontSize: 12, fontWeight: '500', color: '#475569', marginBottom: 4 },
   addModalInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: D.inputRadius, paddingVertical: 8, paddingHorizontal: 10, fontSize: 13, color: '#111', backgroundColor: '#fff' },
   addModalField: { marginBottom: 14 },

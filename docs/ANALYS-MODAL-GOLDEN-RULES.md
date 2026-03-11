@@ -1,6 +1,8 @@
 # Analys: Golden rules för modaler vs Skapa nytt företag-modalen
 
-**Status:** Denna analys ledde till att vi införde **en** golden rule. Aktuell standard: **docs/MODAL_GOLDEN_RULE.md**. Referens: Skapa nytt företag (AdminCreateCompanyModal). Primärknapp = bannerns färg (dimmad #2D3A4B).
+**Status:** Denna analys ledde till att vi införde **en** golden rule. Aktuell standard: **docs/MODAL_GOLDEN_RULE.md**.
+
+**Uppdatering (banner enhetlighet):** Alla modaler ska nu ha **ljus banner** (#F8FAFC), tunn, **ingen bakgrund** runt titel-ikon eller stäng-X. Referens: **Lägg till leverantör** (AddSupplierPicker / StandardModal). Både StandardModal (modalTheme.js) och ModalBase (modalDesign2026 – headerNeutral/headerNeutralCompact) använder denna stil, så alla modaler som använder dessa komponenter får samma utseende. Primärknapp = #2D3A4B (mörk, inte ljusblå).
 
 ---
 

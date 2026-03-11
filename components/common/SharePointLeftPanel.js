@@ -13,7 +13,17 @@ import ContextMenu from '../ContextMenu';
 import { archiveCompanyProject, auth, deleteFolderCallable, deleteProjectCallable, fetchSharePointProjectMetadataMap, getCompanySharePointSiteIdByRole, getCompanyVisibleSharePointSiteIds, getProjectPresenceOtherUserIds, getSharePointNavigationConfig, isLockedKalkylskedeSharePointFolderPath, normalizeSharePointPath, patchCompanyProject, subscribeCompanyProjects, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../firebase';
 import { LeftPanelProjectSearch } from '../HeaderComponents';
 import { useBackgroundTasks } from '../../contexts/BackgroundTasksContext';
-import { SIDEBAR_BG } from './layoutConstants';
+import {
+  CONTEXT_PANEL_BG,
+  CONTEXT_PANEL_BORDER_COLOR,
+  CONTEXT_PANEL_GAP,
+  CONTEXT_PANEL_HEADER_HEIGHT,
+  CONTEXT_PANEL_ITEM_HOVER_BG,
+  CONTEXT_PANEL_ITEM_RADIUS,
+  CONTEXT_PANEL_PADDING,
+  CONTEXT_PANEL_ROW_MIN_HEIGHT,
+  SIDEBAR_BG,
+} from './layoutConstants';
 import { AnimatedChevron, MicroPulse, MicroShake } from './leftNavMicroAnimations';
 import { ConfirmModal } from './Modals';
 import { ProjectSidebarHeader } from './ProjectSidebarHeader';
@@ -57,6 +67,14 @@ const STORAGE_KEYS = {
   verifiedAt: 'verifiedAt',
 };
 
+/** Theme for context panel items (light surface, nav-style rows). */
+const CONTEXT_PANEL_THEME = {
+  hoverBg: CONTEXT_PANEL_ITEM_HOVER_BG,
+  itemBorderRadius: CONTEXT_PANEL_ITEM_RADIUS,
+  itemMinHeight: CONTEXT_PANEL_ROW_MIN_HEIGHT,
+  itemMarginBottom: CONTEXT_PANEL_GAP,
+};
+
 function isHiddenSystemRootFolderName(name) {
   const n = String(name || '').trim().toLowerCase();
   if (!n) return false;
@@ -85,6 +103,7 @@ function RecursiveFolderView({
   projectMetadataMap = null,
   fallbackPhaseKey = null,
   onOpenSpContextMenu = null,
+  contextPanelTheme = null,
 }) {
   const [isHovered, setIsHovered] = useState(false);
 
@@ -195,6 +214,10 @@ function RecursiveFolderView({
               if (typeof onOpenSpContextMenu === 'function') onOpenSpContextMenu(e, folder);
             } catch (_e) {}
           }}
+          hoverBg={contextPanelTheme?.hoverBg}
+          itemBorderRadius={contextPanelTheme?.itemBorderRadius}
+          itemMinHeight={contextPanelTheme?.itemMinHeight}
+          itemMarginBottom={contextPanelTheme?.itemMarginBottom}
           left={() => (
             <>
               {showChevron ? (
@@ -248,6 +271,7 @@ function RecursiveFolderView({
                   level={level + 1}
                   expandedSubs={expandedSubs}
                   spinSubs={spinSubs}
+                  contextPanelTheme={contextPanelTheme}
                   lockedSubs={lockedSubs}
                   lockTickSubs={lockTickSubs}
                   onToggle={onToggle}
@@ -387,6 +411,7 @@ function RecursiveFolderView({
                 projectMetadataMap={projectMetadataMap}
                 fallbackPhaseKey={fallbackPhaseKey}
                 onOpenSpContextMenu={onOpenSpContextMenu}
+                contextPanelTheme={contextPanelTheme}
               />
             );
           })}
@@ -720,6 +745,8 @@ export function SharePointLeftPanel({
     error: '',
     target: null, // { projectId }
   });
+
+  const [spArchiveFolderConfirm, setSpArchiveFolderConfirm] = useState({ visible: false, companyId: null, siteId: null, folderPath: null, target: null, normalizedPath: null, name: '' });
 
   const closeDeleteConfirm = useCallback(() => {
     setDeleteConfirm((cur) => {
@@ -1078,6 +1105,49 @@ export function SharePointLeftPanel({
     }
   };
 
+  const runSpArchiveFolderConfirmed = useCallback(async () => {
+    const p = spArchiveFolderConfirm;
+    if (!p?.visible || !p.companyId || !p.siteId || !p.normalizedPath) {
+      setSpArchiveFolderConfirm((prev) => ({ ...prev, visible: false }));
+      return;
+    }
+    setSpArchiveFolderConfirm((prev) => ({ ...prev, visible: false }));
+    try {
+      const systemSiteId = await getCompanySharePointSiteIdByRole(p.companyId, 'system', { syncIfMissing: true });
+      if (!systemSiteId) throw new Error('Ingen DK Bas-site hittades för arkivering.');
+      await ensureDkBasStructure(systemSiteId);
+      if (isProjectFolder(p.target)) {
+        const msg = 'Projekt arkiveras via projektlistan.';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          try { window.alert(msg); } catch (_e) {}
+        } else {
+          try { Alert.alert('Inte tillåtet', msg); } catch (_e) {}
+        }
+        return;
+      }
+      const pathParts = String(p.normalizedPath || '').split('/').filter(Boolean);
+      const destName = pathParts[pathParts.length - 1] || p.name;
+      const destParentPath = pathParts.length > 1 ? `Arkiv/Mappar/${pathParts.slice(0, -1).join('/')}` : 'Arkiv/Mappar';
+      await moveDriveItemAcrossSitesByPath({
+        sourceSiteId: p.siteId,
+        sourcePath: p.normalizedPath,
+        destSiteId: systemSiteId,
+        destParentPath,
+        destName,
+      });
+      try { removeFolderFromFilteredHierarchy(p.siteId, p.folderPath); } catch (_e) {}
+      try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
+    } catch (e) {
+      console.error('[Archive] error', e?.message || e);
+      const msg = e?.message || String(e);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        try { window.alert(msg); } catch (_e2) {}
+      } else {
+        try { Alert.alert('Fel', msg); } catch (_e2) {}
+      }
+    }
+  }, [spArchiveFolderConfirm, onPressRefresh]);
+
   const isSiteSectionExpanded = (siteId, sectionKey) => {
     const sid = String(siteId || '').trim();
     if (!sid) return true;
@@ -1162,6 +1232,7 @@ export function SharePointLeftPanel({
 
     const editPayload = targetObj ? (projectContextMenuPayloadRef.current || null) : null;
     setProjectContextMenuItems([
+      { key: 'show-path', label: 'Visa sökväg', iconName: 'document-text-outline', _projectPayload: editPayload },
       { key: 'edit-project', label: 'Ändra', iconName: 'pencil-outline', _projectPayload: editPayload },
       { key: 'delete-project', label: 'Ta bort', iconName: 'trash-outline', danger: true },
     ]);
@@ -1764,79 +1835,15 @@ export function SharePointLeftPanel({
       }
 
       const name = String(target?.name || '').trim() || 'mappen';
-      const confirmText = `Arkivera "${name}"?`;
-
-      const confirm = (Platform.OS === 'web' && typeof window !== 'undefined')
-        ? window.confirm(confirmText)
-        : await new Promise((resolve) => {
-            Alert.alert('Arkivera', confirmText, [
-              { text: 'Avbryt', style: 'cancel', onPress: () => resolve(false) },
-              { text: 'Arkivera', style: 'destructive', onPress: () => resolve(true) },
-            ]);
-          });
-      if (!confirm) return;
-
-      try {
-        const systemSiteId = await getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: true });
-        if (!systemSiteId) {
-          throw new Error('Ingen DK Bas-site hittades för arkivering.');
-        }
-
-        await ensureDkBasStructure(systemSiteId);
-
-      const isProject = isProjectFolder(target);
-      if (isProject) {
-        const msg = 'Projekt arkiveras via projektlistan.';
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          try { window.alert(msg); } catch (_e) {}
-        } else {
-          try { Alert.alert('Inte tillåtet', msg); } catch (_e) {}
-        }
-        return;
-      }
-
-      const pathParts = String(normalizedPath || '').split('/').filter(Boolean);
-      const destName = pathParts[pathParts.length - 1] || name;
-      const destParentPath = pathParts.length > 1
-        ? `Arkiv/Mappar/${pathParts.slice(0, -1).join('/')}`
-        : 'Arkiv/Mappar';
-
-        console.log('[Archive] start', {
-          siteId,
-          path: normalizedPath,
-          destSiteId: systemSiteId,
-          destParentPath,
-          destName,
-          type: 'folder',
-        });
-
-        await moveDriveItemAcrossSitesByPath({
-          sourceSiteId: siteId,
-          sourcePath: normalizedPath,
-          destSiteId: systemSiteId,
-          destParentPath,
-          destName,
-        });
-
-        console.log('[Archive] moved', {
-          from: `${siteId}:${normalizedPath}`,
-          to: `${systemSiteId}:${destParentPath}/${destName}`,
-        });
-
-        // Update UI immediately; refresh is still triggered to resync from SharePoint.
-        try { removeFolderFromFilteredHierarchy(siteId, folderPath); } catch (_e) {}
-        try {
-          if (typeof onPressRefresh === 'function') onPressRefresh();
-        } catch (_e) {}
-      } catch (e) {
-        console.error('[Archive] error', e?.message || e);
-        const msg = e?.message || String(e);
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          try { window.alert(msg); } catch (_e2) {}
-        } else {
-          try { Alert.alert('Fel', msg); } catch (_e2) {}
-        }
-      }
+      setSpArchiveFolderConfirm({
+        visible: true,
+        companyId,
+        siteId,
+        folderPath,
+        target,
+        normalizedPath,
+        name,
+      });
       return;
     }
   };
@@ -1850,10 +1857,30 @@ export function SharePointLeftPanel({
     closeProjectContextMenu();
 
     if (!key) return;
-    if (!canArchiveProjects) return;
-    if (!companyId) return;
 
     const pid = String(target?.projectId || target?.projectNumber || target?.id || '').trim();
+
+    if (key === 'show-path') {
+      const p = payloadCaptured || target;
+      const fullName = String(p?.fullName || p?.projectName || p?.projectNumber || '').trim() || 'Projekt';
+      const rootPath = String(p?.rootFolderPath || p?.path || '').trim();
+      const siteIdShow = String(p?.sharePointSiteId || p?.siteId || '').trim();
+      const msg =
+        rootPath || siteIdShow
+          ? `Projekt: ${fullName}\n\nPlats i SharePoint:\n/${rootPath || '(saknas)'}\n\nSite-ID: ${siteIdShow || '(saknas)'}`
+          : `Projekt: ${fullName}\n\nIngen sökväg sparad för detta projekt.`;
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        try {
+          window.alert(msg);
+        } catch (_e) {}
+      } else {
+        Alert.alert('Projektets plats', msg);
+      }
+      return;
+    }
+
+    if (!canArchiveProjects) return;
+    if (!companyId) return;
     const siteId = String(target?.sharePointSiteId || target?.siteId || '').trim();
     const path = String(target?.rootFolderPath || target?.path || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
 
@@ -3152,9 +3179,9 @@ export function SharePointLeftPanel({
             width: leftWidth,
             padding: isWeb ? 0 : 8,
             borderRightWidth: 1,
-            borderRightColor: ICON_RAIL.bg,
-            borderColor: '#e2e8f0',
-            backgroundColor: Platform.OS === 'web' ? 'transparent' : SIDEBAR_BG,
+            borderRightColor: isWeb ? CONTEXT_PANEL_BORDER_COLOR : ICON_RAIL.bg,
+            borderColor: CONTEXT_PANEL_BORDER_COLOR,
+            backgroundColor: isWeb ? CONTEXT_PANEL_BG : SIDEBAR_BG,
             flex: 1,
             flexShrink: 0,
             minHeight: 0,
@@ -3219,23 +3246,24 @@ export function SharePointLeftPanel({
 
         <View
           style={{
-            paddingVertical: 6,
-            paddingHorizontal: 6,
+            minHeight: CONTEXT_PANEL_HEADER_HEIGHT,
+            paddingVertical: 0,
+            paddingHorizontal: CONTEXT_PANEL_PADDING,
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 6,
+            gap: 8,
             borderBottomWidth: 1,
-            borderBottomColor: ICON_RAIL.bg,
-            marginBottom: 12,
+            borderBottomColor: CONTEXT_PANEL_BORDER_COLOR,
+            marginBottom: CONTEXT_PANEL_GAP,
             ...(leftPanelCollapsed && !showProjectSearch && !phaseShortcutKey ? { justifyContent: 'center' } : {}),
           }}
         >
           {phaseShortcutKey ? (
-            <Ionicons name={PHASE_RAIL_ICONS[phaseShortcutKey] || 'folder-outline'} size={18} color="#475569" style={{ marginRight: 6 }} />
+            <Ionicons name={PHASE_RAIL_ICONS[phaseShortcutKey] || 'folder-outline'} size={18} color="#475569" style={{ marginRight: 8 }} />
           ) : (
-            <Ionicons name="cloud-outline" size={18} color="#475569" style={{ marginRight: 6 }} />
+            <Ionicons name="cloud-outline" size={18} color="#475569" style={{ marginRight: 8 }} />
           )}
-          <Text style={{ fontSize: 15, fontWeight: '600', color: '#1e293b' }} numberOfLines={1}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: '#1e293b', flex: showProjectSearch && leftPanelRoute && !phaseShortcutKey ? 0 : 1 }} numberOfLines={1}>
             {phaseShortcutKey ? (getPhaseMeta(phaseShortcutKey).label || phaseShortcutKey) : 'SharePoint'}
           </Text>
           {showProjectSearch && leftPanelRoute && !leftPanelCollapsed && !phaseShortcutKey ? (
@@ -3293,6 +3321,8 @@ export function SharePointLeftPanel({
             minWidth: '100%',
             width: '100%',
             alignItems: 'stretch',
+            paddingHorizontal: isWeb ? CONTEXT_PANEL_PADDING : undefined,
+            paddingBottom: isWeb ? CONTEXT_PANEL_PADDING : undefined,
           }}
           scrollEnabled
           nestedScrollEnabled
@@ -3395,6 +3425,10 @@ export function SharePointLeftPanel({
                               onHoverIn={() => setHoveredProjectKey(rowKey)}
                               onHoverOut={() => setHoveredProjectKey(null)}
                               onContextMenu={onOpenMenu}
+                              hoverBg={CONTEXT_PANEL_ITEM_HOVER_BG}
+                              itemBorderRadius={CONTEXT_PANEL_ITEM_RADIUS}
+                              itemMinHeight={CONTEXT_PANEL_ROW_MIN_HEIGHT}
+                              itemMarginBottom={CONTEXT_PANEL_GAP}
                               left={() => (
                                 <View
                                   style={{
@@ -3420,6 +3454,10 @@ export function SharePointLeftPanel({
                             labelStyle={{ fontSize: NAV.rowFontSize }}
                             onPress={onSelect}
                             onLongPress={onOpenMenu}
+                            hoverBg={CONTEXT_PANEL_ITEM_HOVER_BG}
+                            itemBorderRadius={CONTEXT_PANEL_ITEM_RADIUS}
+                            itemMinHeight={CONTEXT_PANEL_ROW_MIN_HEIGHT}
+                            itemMarginBottom={CONTEXT_PANEL_GAP}
                             left={() => (
                               <View
                                 style={{
@@ -3723,6 +3761,10 @@ export function SharePointLeftPanel({
                             labelStyle={{ fontSize: NAV.rowFontSize }}
                             onPress={onSelect}
                             onLongPress={onOpenMenu}
+                            hoverBg={CONTEXT_PANEL_ITEM_HOVER_BG}
+                            itemBorderRadius={CONTEXT_PANEL_ITEM_RADIUS}
+                            itemMinHeight={CONTEXT_PANEL_ROW_MIN_HEIGHT}
+                            itemMarginBottom={CONTEXT_PANEL_GAP}
                             left={() => (
                               <View
                                 style={{
@@ -3814,6 +3856,10 @@ export function SharePointLeftPanel({
                           onHoverIn={() => setHoveredSiteId(siteItem.siteId)}
                           onHoverOut={() => setHoveredSiteId(null)}
                           hovered={isSiteHovered}
+                          hoverBg={CONTEXT_PANEL_ITEM_HOVER_BG}
+                          itemBorderRadius={CONTEXT_PANEL_ITEM_RADIUS}
+                          itemMinHeight={CONTEXT_PANEL_ROW_MIN_HEIGHT}
+                          itemMarginBottom={CONTEXT_PANEL_GAP}
                           style={{ minHeight: NAV.rowMinHeightCompact }}
                           left={() => (
                             <>
@@ -3882,6 +3928,7 @@ export function SharePointLeftPanel({
                                   projectMetadataMap={projectMetadataMap}
                                   fallbackPhaseKey={projectPhaseKey}
                                   onOpenSpContextMenu={openSpContextMenu}
+                                  contextPanelTheme={CONTEXT_PANEL_THEME}
                                 />
                               ));
                             })()}
@@ -4015,6 +4062,17 @@ export function SharePointLeftPanel({
           error={archiveConfirm?.error || ''}
           onCancel={closeArchiveConfirm}
           onConfirm={runArchiveConfirmed}
+        />
+
+        <ConfirmModal
+          visible={!!spArchiveFolderConfirm?.visible}
+          title="Arkivera"
+          message={`Arkivera "${spArchiveFolderConfirm?.name || 'mappen'}"?`}
+          danger
+          confirmLabel="Arkivera"
+          hideKeyboardHints
+          onConfirm={runSpArchiveFolderConfirmed}
+          onCancel={() => setSpArchiveFolderConfirm((prev) => ({ ...prev, visible: false }))}
         />
 
         {toast.visible ? (

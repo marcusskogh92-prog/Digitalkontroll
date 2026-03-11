@@ -8,6 +8,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
+import {
+  CONTEXT_PANEL_BORDER_COLOR,
+  CONTEXT_PANEL_GAP,
+  CONTEXT_PANEL_HEADER_HEIGHT,
+  CONTEXT_PANEL_ITEM_HOVER_BG,
+  CONTEXT_PANEL_ITEM_RADIUS,
+  CONTEXT_PANEL_PADDING,
+  CONTEXT_PANEL_ROW_MIN_HEIGHT,
+} from './layoutConstants';
 import { AnimatedChevron } from './leftNavMicroAnimations';
 import SidebarItem from './SidebarItem';
 
@@ -28,10 +37,12 @@ const styles = StyleSheet.create({
     minHeight: 0,
   },
   sectionHeader: {
-    paddingVertical: SECTION_HEADER_PADDING_VERTICAL,
-    paddingHorizontal: SECTION_HEADER_PADDING_HORIZONTAL,
+    minHeight: CONTEXT_PANEL_HEADER_HEIGHT,
+    paddingVertical: 0,
+    paddingHorizontal: CONTEXT_PANEL_PADDING,
+    justifyContent: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    borderBottomColor: CONTEXT_PANEL_BORDER_COLOR,
   },
   sectionTitle: {
     fontSize: 15,
@@ -40,7 +51,7 @@ const styles = StyleSheet.create({
   },
   groupHeader: {
     paddingVertical: 8,
-    paddingHorizontal: SECTION_HEADER_PADDING_HORIZONTAL,
+    paddingHorizontal: CONTEXT_PANEL_PADDING,
     paddingTop: 14,
     marginTop: 4,
   },
@@ -51,34 +62,40 @@ const styles = StyleSheet.create({
   },
   list: {
     paddingVertical: GRID,
+    paddingHorizontal: CONTEXT_PANEL_PADDING,
   },
   itemWrapper: {
-    marginBottom: 2,
+    marginBottom: CONTEXT_PANEL_GAP,
   },
 });
 
 /** Rubrik för vänsterpanelen – samma stil för alla rail-val. Exporteras för återanvändning i HomeScreen. */
-export function LeftPanelRailHeader({ title }) {
+export function LeftPanelRailHeader({ title, icon }) {
   return (
     <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        {icon ? (
+          <Ionicons name={icon} size={20} color={LEFT_NAV.textDefault} style={{ marginTop: 1 }} accessibilityLabel={`${title} ikon`} />
+        ) : null}
+        <Text style={styles.sectionTitle}>{title}</Text>
+      </View>
     </View>
   );
 }
 
 /** Register – Relationer: Kontakter, Leverantörer, Kunder */
 const REGISTER_RELATIONER_ITEMS = [
-  { key: 'kontakter', label: 'Kontakter', route: 'ContactRegistry' },
-  { key: 'leverantorer', label: 'Leverantörer', route: 'Suppliers' },
-  { key: 'kunder', label: 'Kunder', route: 'Customers' },
+  { key: 'kontakter', label: 'Kontakter', route: 'ContactRegistry', icon: 'people-outline' },
+  { key: 'leverantorer', label: 'Leverantörer', route: 'Suppliers', icon: 'briefcase-outline' },
+  { key: 'kunder', label: 'Kunder', route: 'Customers', icon: 'people-circle-outline' },
 ];
 
 /** Register – Struktur: Byggdelar, Konto, Kategorier, Mallar */
 const REGISTER_STRUKTUR_ITEMS = [
-  { key: 'byggdelar', label: 'Byggdelar', route: 'ManageCompany', focus: 'byggdel' },
-  { key: 'konton', label: 'Konto', route: 'ManageCompany', focus: 'kontoplan' },
-  { key: 'kategorier', label: 'Kategorier', route: 'ManageCompany', focus: 'kategorier' },
-  { key: 'mallar', label: 'Mallar', openModal: 'openMallarModal' },
+  { key: 'byggdelar', label: 'Byggdelar', route: 'ManageCompany', focus: 'byggdel', icon: 'cube-outline' },
+  { key: 'konton', label: 'Konto', route: 'ManageCompany', focus: 'kontoplan', icon: 'wallet-outline' },
+  { key: 'kategorier', label: 'Kategorier', route: 'ManageCompany', focus: 'kategorier', icon: 'pricetag-outline' },
+  { key: 'mallar', label: 'Mallar', openModal: 'openMallarModal', icon: 'document-text-outline' },
 ];
 
 /** Register-panel med grupper: Relationer (Kontakter, Leverantörer, Kunder) och Struktur (Byggdelar, Konto, Kategorier). */
@@ -98,6 +115,7 @@ function RegisterSection({ activeRouteName, activeItemKey, onPress }) {
       const active = activeItemKey === item.key || routeMatch || (item.route === 'ManageCompany' && focusMatch);
       const isHovered = Platform.OS === 'web' && hoveredKey === item.key;
       const getIconColor = (state) => (state.active ? ICON_COLOR_ACTIVE : state.hovered ? ICON_COLOR_HOVER : ICON_COLOR_DEFAULT);
+      const iconName = item.icon || 'ellipse-outline';
 
       return (
         <View key={item.key} style={styles.itemWrapper}>
@@ -109,10 +127,16 @@ function RegisterSection({ activeRouteName, activeItemKey, onPress }) {
             onHoverIn={Platform.OS === 'web' ? () => setHoveredKey(item.key) : undefined}
             onHoverOut={Platform.OS === 'web' ? () => setHoveredKey(null) : undefined}
             indentMode="padding"
-            indent={LEFT_NAV.indentPerLevel * 2}
+            indent={LEFT_NAV.indentPerLevel}
             fullWidth
+            hoverBg={CONTEXT_PANEL_ITEM_HOVER_BG}
+            itemBorderRadius={CONTEXT_PANEL_ITEM_RADIUS}
+            itemMinHeight={CONTEXT_PANEL_ROW_MIN_HEIGHT}
+            itemMarginBottom={0}
+            left={(state) => (
+              <Ionicons name={iconName} size={ICON_SIZE} color={getIconColor(state)} style={{ marginRight: 8 }} />
+            )}
             style={{
-              minHeight: LEFT_NAV.rowMinHeight,
               paddingVertical: LEFT_NAV.rowPaddingVertical,
               paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
             }}
@@ -126,17 +150,23 @@ function RegisterSection({ activeRouteName, activeItemKey, onPress }) {
     <View style={styles.container}>
       <View style={styles.sectionHeader}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Ionicons name="grid-outline" size={18} color={LEFT_NAV.textDefault} style={{ marginTop: 1 }} accessibilityLabel="Register ikon" />
+          <Ionicons name="grid-outline" size={20} color={LEFT_NAV.textDefault} style={{ marginTop: 1 }} accessibilityLabel="Register ikon" />
           <Text style={styles.sectionTitle}>Register</Text>
         </View>
       </View>
       <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: GRID * 2 }} keyboardShouldPersistTaps="handled">
         <View style={styles.groupHeader}>
-          <Text style={styles.groupTitle}>👥 Relationer</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Ionicons name="people-outline" size={16} color="#64748b" />
+            <Text style={styles.groupTitle}>Relationer</Text>
+          </View>
         </View>
         {renderItems(REGISTER_RELATIONER_ITEMS)}
         <View style={styles.groupHeader}>
-          <Text style={styles.groupTitle}>🏗 Struktur</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Ionicons name="construct-outline" size={16} color="#64748b" />
+            <Text style={styles.groupTitle}>Struktur</Text>
+          </View>
         </View>
         {renderItems(REGISTER_STRUKTUR_ITEMS)}
       </ScrollView>
@@ -155,9 +185,9 @@ const ADMIN_ITEMS = [
 
 /** SharePoint: Siter, Projekt, Trädstruktur */
 const SHAREPOINT_ITEMS = [
-  { key: 'siter', label: 'Siter', route: 'ManageSharePointNavigation' },
-  { key: 'projekt', label: 'Projekt', route: 'ManageSharePointNavigation', params: { tab: 'projekt' } },
-  { key: 'tradstruktur', label: 'Trädstruktur', route: 'ManageSharePointNavigation', params: { tab: 'trad' } },
+  { key: 'siter', label: 'Siter', route: 'ManageSharePointNavigation', icon: 'server-outline' },
+  { key: 'projekt', label: 'Projekt', route: 'ManageSharePointNavigation', params: { tab: 'projekt' }, icon: 'folder-outline' },
+  { key: 'tradstruktur', label: 'Trädstruktur', route: 'ManageSharePointNavigation', params: { tab: 'trad' }, icon: 'git-network-outline' },
 ];
 
 const ICON_SIZE = 18;
@@ -185,7 +215,7 @@ function SectionList({ title, headerIcon = null, items, activeRouteName, activeI
           {headerIcon ? (
             <Ionicons
               name={headerIcon}
-              size={18}
+              size={20}
               color={LEFT_NAV.textDefault}
               style={{ marginTop: 1 }}
               accessibilityLabel={`${title} ikon`}
@@ -216,11 +246,14 @@ function SectionList({ title, headerIcon = null, items, activeRouteName, activeI
                 indentMode="padding"
                 fullWidth
                 labelWeight={hasBold ? item.labelWeight : undefined}
+                hoverBg={CONTEXT_PANEL_ITEM_HOVER_BG}
+                itemBorderRadius={CONTEXT_PANEL_ITEM_RADIUS}
+                itemMinHeight={CONTEXT_PANEL_ROW_MIN_HEIGHT}
+                itemMarginBottom={0}
                 left={hasIcon ? (state) => (
-                  <Ionicons name={item.icon} size={ICON_SIZE} color={getIconColor(state)} style={{ marginRight: 2 }} />
+                  <Ionicons name={item.icon} size={ICON_SIZE} color={getIconColor(state)} style={{ marginRight: 8 }} />
                 ) : undefined}
                 style={{
-                  minHeight: LEFT_NAV.rowMinHeight,
                   paddingVertical: LEFT_NAV.rowPaddingVertical,
                   paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
                 }}
@@ -272,12 +305,16 @@ function CompanyRow({ company, onPress, onContextMenu, onHoverIn, onHoverOut, is
         indentMode="padding"
         indent={LEFT_NAV.indentPerLevel}
         fullWidth
+        hoverBg={CONTEXT_PANEL_ITEM_HOVER_BG}
+        itemBorderRadius={CONTEXT_PANEL_ITEM_RADIUS}
+        itemMinHeight={CONTEXT_PANEL_ROW_MIN_HEIGHT}
+        itemMarginBottom={0}
         left={(state) => (
           <Ionicons
             name="business-outline"
             size={14}
             color={displayColor}
-            style={{ marginRight: 4 }}
+            style={{ marginRight: 8 }}
           />
         )}
         right={showSuperadminBadge ? () => (
@@ -286,7 +323,6 @@ function CompanyRow({ company, onPress, onContextMenu, onHoverIn, onHoverOut, is
           </View>
         ) : undefined}
         style={{
-          minHeight: LEFT_NAV.rowMinHeight,
           paddingVertical: LEFT_NAV.rowPaddingVertical,
           paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
         }}
@@ -364,6 +400,7 @@ export function GlobalSidePanelContent({
     return (
       <SectionList
         title="SharePoint"
+        headerIcon="cloud-outline"
         items={SHAREPOINT_ITEMS}
         activeRouteName={activeRouteName}
         activeItemKey={activeItemKey}
@@ -392,7 +429,10 @@ function SuperadminSection({
   return (
     <View style={styles.container}>
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Superadmin</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Ionicons name="shield-checkmark-outline" size={20} color={LEFT_NAV.textDefault} style={{ marginTop: 1 }} accessibilityLabel="Superadmin ikon" />
+          <Text style={styles.sectionTitle}>Superadmin</Text>
+        </View>
       </View>
       <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: GRID * 2 }} keyboardShouldPersistTaps="handled">
         {SUPERADMIN_ITEMS.map((item) => {
@@ -411,8 +451,12 @@ function SuperadminSection({
                   onHoverOut={Platform.OS === 'web' ? () => setHoveredKey(null) : undefined}
                   indentMode="padding"
                   fullWidth
+                  hoverBg={CONTEXT_PANEL_ITEM_HOVER_BG}
+                  itemBorderRadius={CONTEXT_PANEL_ITEM_RADIUS}
+                  itemMinHeight={CONTEXT_PANEL_ROW_MIN_HEIGHT}
+                  itemMarginBottom={0}
                   left={(state) => (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 4 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
                       <AnimatedChevron
                         expanded={superadminForetagExpanded}
                         size={12}
@@ -423,7 +467,6 @@ function SuperadminSection({
                     </View>
                   )}
                   style={{
-                    minHeight: LEFT_NAV.rowMinHeight,
                     paddingVertical: LEFT_NAV.rowPaddingVertical,
                     paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
                   }}
@@ -444,6 +487,10 @@ function SuperadminSection({
                           indentMode="padding"
                           indent={LEFT_NAV.indentPerLevel}
                           fullWidth
+                          hoverBg={CONTEXT_PANEL_ITEM_HOVER_BG}
+                          itemBorderRadius={CONTEXT_PANEL_ITEM_RADIUS}
+                          itemMinHeight={CONTEXT_PANEL_ROW_MIN_HEIGHT}
+                          itemMarginBottom={0}
                           left={(state) => (
                             <View style={{ marginRight: 8, width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }}>
                               <Ionicons name="business-outline" size={18} color={state.hovered ? ICON_COLOR_HOVER : ICON_COLOR_DEFAULT} />
@@ -458,7 +505,6 @@ function SuperadminSection({
                             </View>
                           )}
                           style={{
-                            minHeight: LEFT_NAV.rowMinHeight,
                             paddingVertical: LEFT_NAV.rowPaddingVertical,
                             paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
                           }}
@@ -511,8 +557,12 @@ function SuperadminSection({
                 indentMode="padding"
                 fullWidth
                 labelWeight={item.labelWeight}
+                hoverBg={CONTEXT_PANEL_ITEM_HOVER_BG}
+                itemBorderRadius={CONTEXT_PANEL_ITEM_RADIUS}
+                itemMinHeight={CONTEXT_PANEL_ROW_MIN_HEIGHT}
+                itemMarginBottom={0}
                 left={item.icon ? (state) => (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 2 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
                     {hasChevron ? (
                       <>
                         <AnimatedChevron
@@ -529,7 +579,6 @@ function SuperadminSection({
                   </View>
                 ) : undefined}
                 style={{
-                  minHeight: LEFT_NAV.rowMinHeight,
                   paddingVertical: LEFT_NAV.rowPaddingVertical,
                   paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
                 }}

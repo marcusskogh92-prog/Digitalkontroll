@@ -19,6 +19,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { MODAL_DESIGN_2026 } from '../../constants/modalDesign2026';
 import { MODAL_THEME } from '../../constants/modalTheme';
 import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
 import { useModalKeyboard } from '../../hooks/useModalKeyboard';
@@ -28,19 +29,15 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: MODAL_DESIGN_2026.overlayBg,
   },
   box: {
     backgroundColor: '#fff',
-    borderRadius: 14,
+    borderRadius: MODAL_DESIGN_2026.radius,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(15, 23, 42, 0.22)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    elevation: 16,
+    ...MODAL_DESIGN_2026.shadowNative,
     flexDirection: 'column',
     maxWidth: '90vw',
     maxHeight: '85vh',
@@ -52,6 +49,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: MODAL_THEME.banner.paddingVertical,
     paddingHorizontal: MODAL_THEME.banner.paddingHorizontal,
+    minHeight: MODAL_THEME.banner.minHeight,
+    maxHeight: MODAL_THEME.banner.maxHeight,
     backgroundColor: MODAL_THEME.banner.backgroundColor,
     borderBottomWidth: 1,
     borderBottomColor: MODAL_THEME.banner.borderBottomColor,
@@ -90,7 +89,7 @@ const styles = StyleSheet.create({
   closeBtn: {
     padding: MODAL_THEME.banner.closeBtnPadding,
     borderRadius: MODAL_THEME.banner.iconBgRadius,
-    backgroundColor: MODAL_THEME.banner.iconBg,
+    backgroundColor: MODAL_THEME.banner.closeBtnBg ?? MODAL_THEME.banner.iconBg,
   },
   footer: {
     flexShrink: 0,
@@ -104,19 +103,31 @@ const styles = StyleSheet.create({
     borderTopColor: MODAL_THEME.footer.borderTopColor,
     backgroundColor: MODAL_THEME.footer.backgroundColor,
   },
-  footerBtnDark: {
+  footerBtnStang: {
     paddingVertical: MODAL_THEME.footer.btnPaddingVertical,
     paddingHorizontal: MODAL_THEME.footer.btnPaddingHorizontal,
     borderRadius: MODAL_THEME.footer.btnBorderRadius,
-    borderWidth: 1,
-    borderColor: MODAL_THEME.footer.btnBorderColor,
+    borderWidth: 0,
     backgroundColor: MODAL_THEME.footer.btnBackground,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  footerBtnSave: {
+    paddingVertical: MODAL_THEME.footer.btnPaddingVertical,
+    paddingHorizontal: MODAL_THEME.footer.btnPaddingHorizontal,
+    borderRadius: MODAL_THEME.footer.btnBorderRadius,
+    borderWidth: 0,
+    backgroundColor: MODAL_THEME.footer.saveBtnBackground,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
   footerBtnText: {
     fontSize: MODAL_THEME.footer.btnFontSize,
     fontWeight: MODAL_THEME.footer.btnFontWeight,
     color: MODAL_THEME.footer.btnTextColor,
+  },
+  footerBtnSaveText: {
+    fontSize: MODAL_THEME.footer.btnFontSize,
+    fontWeight: MODAL_THEME.footer.btnFontWeight,
+    color: MODAL_THEME.footer.saveBtnTextColor,
   },
 });
 
@@ -133,10 +144,10 @@ export default function StandardModal({
   onSave,
   saving = false,
   saveDisabled,
-  defaultWidth = 900,
-  defaultHeight = 600,
-  minWidth = 400,
-  minHeight = 300,
+  defaultWidth = 480,
+  defaultHeight = 380,
+  minWidth = 380,
+  minHeight = 320,
 }) {
   const canSave = Boolean(onSave) && !saveDisabled;
   useModalKeyboard(visible, onClose, onSave, { canSave, saving, disabled: !visible });
@@ -212,18 +223,18 @@ export default function StandardModal({
           <View style={styles.footer}>
             {footerExtra}
             <TouchableOpacity
-              style={[styles.footerBtnDark]}
+              style={styles.footerBtnStang}
               onPress={onClose}
             >
               <Text style={styles.footerBtnText}>Stäng</Text>
             </TouchableOpacity>
             {onSave && (
               <TouchableOpacity
-                style={[styles.footerBtnDark, (saveDisabled || saving) && { opacity: 0.5 }]}
+                style={[styles.footerBtnSave, (saveDisabled || saving) && { opacity: 0.5 }]}
                 onPress={onSave}
                 disabled={saveDisabled || saving}
               >
-                <Text style={styles.footerBtnText}>
+                <Text style={styles.footerBtnSaveText}>
                   {saving ? 'Sparar…' : (saveLabel || 'Spara ändringar')}
                 </Text>
               </TouchableOpacity>

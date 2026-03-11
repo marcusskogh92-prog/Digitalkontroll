@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { fetchKontoplan, fetchCategories } from '../../../../components/firebase';
+import { fetchByggdelar, fetchKontoplan, fetchCategories } from '../../../../components/firebase';
 
 let createPortal = null;
 if (typeof document !== 'undefined') {
@@ -122,6 +122,7 @@ export default function InkopsplanRow({
   onToggleExpand,
   onRowContextMenu,
   tableStyles,
+  visibleColumns,
   isAlt,
   companyId,
   projectId,
@@ -220,6 +221,11 @@ export default function InkopsplanRow({
   }, []);
 
   const handleCellPress = useCallback((cell, valueForEdit) => {
+    // Benämning: alltid redigerbar (även för rader från register). På web öppnas redigering vid enkelklick.
+    if (cell === 'name' && canEdit && Platform.OS === 'web') {
+      startEdit('name', valueForEdit);
+      return;
+    }
     const now = Date.now();
     const { cell: lastCell, time: lastTime } = lastTapRef.current;
     if (canEdit && lastCell === cell && (now - lastTime) < DBL_TAP_MS) {
@@ -242,6 +248,17 @@ export default function InkopsplanRow({
         if (nr === (row?.nr ?? '') || (nr === null && !row?.nr)) return;
         try {
           await updateInkopsplanRowFields(companyId, projectId, rowId, { nr: nr || '' });
+          if (nr) {
+            try {
+              const byggdelar = await fetchByggdelar(companyId);
+              const match = (Array.isArray(byggdelar) ? byggdelar : []).find(
+                (b) => String(b?.code ?? '').trim() === String(nr).trim()
+              );
+              if (match && safeText(match.name)) {
+                await updateInkopsplanRowFields(companyId, projectId, rowId, { name: safeText(match.name) });
+              }
+            } catch (_e) {}
+          }
           try { onRowsChanged?.(); } catch (_e) {}
         } catch (e) {
           setEditValue(row?.nr ?? '');
@@ -252,6 +269,7 @@ export default function InkopsplanRow({
         const nameVal = capitalizeFirst(trimmed || '');
         if (nameVal === (row?.name ?? '')) return;
         try {
+          // Uppdaterar endast inköpsplan-raden; registret (byggdel/konto/kategori) ändras inte.
           await updateInkopsplanRowFields(companyId, projectId, rowId, { name: nameVal || (row?.name ?? '') });
           try { onRowsChanged?.(); } catch (_e) {}
         } catch (e) {
@@ -358,27 +376,30 @@ export default function InkopsplanRow({
           />
         </View>
       </Pressable>
-      <View style={[ts.cell, ts.colBd]}>
-        {canEdit && editingCell === 'bd' ? (
-          <TextInput
-            value={editValue}
-            onChangeText={setEditValue}
-            onBlur={handleBlur}
-            onSubmitEditing={handleSubmitBD}
-            keyboardType={Platform.OS === 'web' ? 'default' : 'number-pad'}
-            style={styles.cellInput}
-            autoFocus
-            selectTextOnFocus
-          />
-        ) : (
-          <Pressable
-            onPress={() => handleCellPress('bd', bd)}
-            style={({ hovered }) => [styles.cellInputTouch, hovered && ts.rowHover]}
-          >
-            <Text style={styles.cellText} numberOfLines={1}>{bd}</Text>
-          </Pressable>
-        )}
-      </View>
+      {(visibleColumns?.bd !== false) ? (
+        <View style={[ts.cell, ts.colBd]}>
+          {canEdit && editingCell === 'bd' ? (
+            <TextInput
+              value={editValue}
+              onChangeText={setEditValue}
+              onBlur={handleBlur}
+              onSubmitEditing={handleSubmitBD}
+              keyboardType={Platform.OS === 'web' ? 'default' : 'number-pad'}
+              style={styles.cellInput}
+              autoFocus
+              selectTextOnFocus
+            />
+          ) : (
+            <Pressable
+              onPress={() => handleCellPress('bd', bd)}
+              style={({ hovered }) => [styles.cellInputTouch, hovered && ts.rowHover]}
+            >
+              <Text style={styles.cellText} numberOfLines={1}>{bd}</Text>
+            </Pressable>
+          )}
+        </View>
+      ) : null}
+      {(visibleColumns?.name !== false) ? (
       <View style={[ts.cell, ts.colName]}>
         {canEdit && editingCell === 'name' ? (
           <TextInput
@@ -395,11 +416,14 @@ export default function InkopsplanRow({
           <Pressable
             onPress={() => handleCellPress('name', name)}
             style={({ hovered }) => [styles.cellInputTouch, hovered && ts.rowHover]}
+            accessibilityLabel="Benämning – klicka för att redigera (ändras endast här, inte i registret)"
           >
             <Text style={styles.cellText} numberOfLines={1}>{name}</Text>
           </Pressable>
         )}
       </View>
+      ) : null}
+      {(visibleColumns?.konto !== false) ? (
       <View ref={cellRefKonto} style={[ts.cell, ts.colKonto, styles.cellWithDropdown]}>
         {canEdit && editingCell === 'konto' ? (
           <>
@@ -452,6 +476,8 @@ export default function InkopsplanRow({
           </Pressable>
         )}
       </View>
+      ) : null}
+      {(visibleColumns?.kategori !== false) ? (
       <View ref={cellRefKategori} style={[ts.cell, ts.colKategori, styles.cellWithDropdown]}>
         {canEdit && editingCell === 'kategori' ? (
           <>
@@ -502,12 +528,16 @@ export default function InkopsplanRow({
           </Pressable>
         )}
       </View>
+      ) : null}
+      {(visibleColumns?.status !== false) ? (
       <Pressable
         onPress={() => onSelectRow?.(row)}
         style={({ hovered }) => [ts.cell, ts.colStatus, hovered && ts.rowHover]}
       >
         <InkopsplanStatusBadge status={overallStatus} />
       </Pressable>
+      ) : null}
+      {(visibleColumns?.ansvarig !== false) ? (
       <View ref={cellRefAnsvarig} style={[ts.cell, ts.colAnsvarig, styles.cellWithDropdown]}>
         {canEdit && editingCell === 'ansvarig' ? (
           (() => {
@@ -551,6 +581,8 @@ export default function InkopsplanRow({
           </Pressable>
         )}
       </View>
+      ) : null}
+      {(visibleColumns?.request !== false) ? (
       <Pressable
         onPress={() => {
           if (canEdit && typeof onOpenInquiryModal === 'function') {
@@ -568,6 +600,7 @@ export default function InkopsplanRow({
           {inquiryDraft ? `${inquiryDraft.slice(0, 32)}${inquiryDraft.length > 32 ? '…' : ''}` : request}
         </Text>
       </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -582,12 +615,15 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     color: '#111',
+    textAlign: 'left',
+    alignSelf: 'flex-start',
   },
   cellInputTouch: {
     flex: 1,
     minWidth: 0,
     alignSelf: 'stretch',
     justifyContent: 'center',
+    alignItems: 'flex-start',
   },
   cellInput: {
     flex: 1,
@@ -668,6 +704,7 @@ const styles = StyleSheet.create({
   requestCellWrap: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: 6,
     flex: 1,
     minWidth: 0,

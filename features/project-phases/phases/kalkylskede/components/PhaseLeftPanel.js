@@ -4,8 +4,9 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import ConfirmModal from '../../../../../components/common/Modals/ConfirmModal';
 import { ProjectSidebarHeader } from '../../../../../components/common/ProjectSidebarHeader';
 import SidebarItem from '../../../../../components/common/SidebarItem';
 import { AnimatedChevron, MicroPulse } from '../../../../../components/common/leftNavMicroAnimations';
@@ -49,6 +50,7 @@ export default function PhaseLeftPanel({
   const [targetSectionIdForItem, setTargetSectionIdForItem] = useState(null);
   const [targetParentItemIdForItem, setTargetParentItemIdForItem] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState({ visible: false, kind: null, sectionId: null, itemId: null, parentItemId: null });
 
   const [sharePointTree, setSharePointTree] = useState([]);
   const [spToggleTickByPath, setSpToggleTickByPath] = useState({});
@@ -692,38 +694,24 @@ export default function PhaseLeftPanel({
     }
   };
 
-  const handleRemoveSection = async (sectionId) => {
+  const runRemoveSection = useCallback(async (sectionId) => {
     if (!companyId || !loadNavigation) return;
-    
-    Alert.alert(
-      'Ta bort sektion',
-      'Är du säker på att du vill ta bort denna sektion?',
-      [
-        { text: 'Avbryt', style: 'cancel' },
-        {
-          text: 'Ta bort',
-          style: 'destructive',
-          onPress: async () => {
-            setSaving(true);
-            try {
-              const success = await removeSection(companyId, null, 'kalkylskede', sectionId);
-              if (success) {
-                if (loadNavigation) {
-                  await loadNavigation();
-                }
-              } else {
-                Alert.alert('Fel', 'Kunde inte ta bort sektion');
-              }
-            } catch (error) {
-              console.error('[PhaseLeftPanel] Error removing section:', error);
-              Alert.alert('Fel', `Kunde inte ta bort sektion: ${error.message || 'Okänt fel'}`);
-            } finally {
-              setSaving(false);
-            }
-          }
-        }
-      ]
-    );
+    setSaving(true);
+    try {
+      const success = await removeSection(companyId, null, 'kalkylskede', sectionId);
+      if (success && loadNavigation) await loadNavigation();
+      else if (!success) Alert.alert('Fel', 'Kunde inte ta bort sektion');
+    } catch (error) {
+      console.error('[PhaseLeftPanel] Error removing section:', error);
+      Alert.alert('Fel', `Kunde inte ta bort sektion: ${error.message || 'Okänt fel'}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [companyId, loadNavigation]);
+
+  const handleRemoveSection = (sectionId) => {
+    if (!companyId || !loadNavigation) return;
+    setConfirmRemove({ visible: true, kind: 'section', sectionId, itemId: null, parentItemId: null });
   };
 
   const handleAddItem = async () => {
@@ -759,38 +747,24 @@ export default function PhaseLeftPanel({
     }
   };
 
-  const handleRemoveItem = async (sectionId, itemId, parentItemId = null) => {
+  const runRemoveItem = useCallback(async (sectionId, itemId, parentItemId) => {
     if (!companyId || !loadNavigation) return;
-    
-    Alert.alert(
-      'Ta bort item',
-      'Är du säker på att du vill ta bort detta item?',
-      [
-        { text: 'Avbryt', style: 'cancel' },
-        {
-          text: 'Ta bort',
-          style: 'destructive',
-          onPress: async () => {
-            setSaving(true);
-            try {
-              const success = await removeItem(companyId, null, 'kalkylskede', sectionId, itemId, parentItemId);
-              if (success) {
-                if (loadNavigation) {
-                  await loadNavigation();
-                }
-              } else {
-                Alert.alert('Fel', 'Kunde inte ta bort item');
-              }
-            } catch (error) {
-              console.error('[PhaseLeftPanel] Error removing item:', error);
-              Alert.alert('Fel', `Kunde inte ta bort item: ${error.message || 'Okänt fel'}`);
-            } finally {
-              setSaving(false);
-            }
-          }
-        }
-      ]
-    );
+    setSaving(true);
+    try {
+      const success = await removeItem(companyId, null, 'kalkylskede', sectionId, itemId, parentItemId ?? null);
+      if (success && loadNavigation) await loadNavigation();
+      else if (!success) Alert.alert('Fel', 'Kunde inte ta bort item');
+    } catch (error) {
+      console.error('[PhaseLeftPanel] Error removing item:', error);
+      Alert.alert('Fel', `Kunde inte ta bort item: ${error.message || 'Okänt fel'}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [companyId, loadNavigation]);
+
+  const handleRemoveItem = (sectionId, itemId, parentItemId = null) => {
+    if (!companyId || !loadNavigation) return;
+    setConfirmRemove({ visible: true, kind: 'item', sectionId, itemId, parentItemId });
   };
 
   // Debug logging
@@ -1426,6 +1400,24 @@ export default function PhaseLeftPanel({
           </View>
         </View>
       </Modal>
+
+      <ConfirmModal
+        visible={confirmRemove.visible}
+        title={confirmRemove.kind === 'section' ? 'Ta bort sektion' : 'Ta bort item'}
+        message={confirmRemove.kind === 'section' ? 'Är du säker på att du vill ta bort denna sektion?' : 'Är du säker på att du vill ta bort detta item?'}
+        danger
+        confirmLabel="Ta bort"
+        busy={saving}
+        onConfirm={() => {
+          if (confirmRemove.kind === 'section' && confirmRemove.sectionId) {
+            runRemoveSection(confirmRemove.sectionId);
+          } else if (confirmRemove.kind === 'item' && confirmRemove.sectionId && confirmRemove.itemId) {
+            runRemoveItem(confirmRemove.sectionId, confirmRemove.itemId, confirmRemove.parentItemId);
+          }
+          setConfirmRemove((p) => ({ ...p, visible: false }));
+        }}
+        onCancel={() => setConfirmRemove((p) => ({ ...p, visible: false }))}
+      />
       </View>
     </View>
   );

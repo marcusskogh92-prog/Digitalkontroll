@@ -33,3 +33,21 @@ export const SIDEBAR_BG = '#f8fafc';
 export const SIDEBAR_BORDER_COLOR = '#e2e8f0';
 /** Default width for phase left panel (inside project). Aligns with leftNavTheme. */
 export const SIDEBAR_PHASE_WIDTH = 280;
+
+// --- Context sidebar (SharePoint panel next to rail) - light theme, matches rail design language ---
+/** Background for context sidebar (light surface). */
+export const CONTEXT_PANEL_BG = '#F8FAFC';
+/** Border between context panel and main content. */
+export const CONTEXT_PANEL_BORDER_COLOR = '#E5E7EB';
+/** Header height for context panel. */
+export const CONTEXT_PANEL_HEADER_HEIGHT = 56;
+/** Padding inside context panel. */
+export const CONTEXT_PANEL_PADDING = 16;
+/** Row min height for nav items in context panel. */
+export const CONTEXT_PANEL_ROW_MIN_HEIGHT = 40;
+/** Gap between rows in context panel. */
+export const CONTEXT_PANEL_GAP = 8;
+/** Hover background for context panel items. */
+export const CONTEXT_PANEL_ITEM_HOVER_BG = '#E2E8F0';
+/** Border radius for context panel items. */
+export const CONTEXT_PANEL_ITEM_RADIUS = 8;

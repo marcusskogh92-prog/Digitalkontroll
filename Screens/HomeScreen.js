@@ -268,6 +268,7 @@ export default function HomeScreen({ navigation, route }) {
   /** Web 2026: tydlig separation dashboard / sharepoint (projekt-browser) / project. Rail styr endast mode. */
   const [appMode, setAppMode] = useState('dashboard');
   const [sidePanelCollapsed, setSidePanelCollapsed] = useState(true); // stängd vid inloggning (hemskärm visar inget i panelen)
+  const [leftPanelPillHover, setLeftPanelPillHover] = useState(false);
   const [dashboardRightPanelCollapsed, setDashboardRightPanelCollapsed] = useState(false);
   /** Högerpanel: 'calendar' | 'activities' – kalender eller Aktiviteter (notiser). */
   const [dashboardRightPanelTab, setDashboardRightPanelTab] = useState('calendar');
@@ -2217,6 +2218,8 @@ export default function HomeScreen({ navigation, route }) {
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'stretch', minHeight: 0, minWidth: 0 }}>
                   <IconRail
                     activeId={railActiveId}
+                    onOpenCreateProject={openCreateProjectModal}
+                    appVersion={appVersion}
                     onSelect={(id) => {
                       if (id === 'produktion' || id === 'avslut' || id === 'eftermarknad') {
                         setInactivePhaseModal(id);
@@ -2343,7 +2346,7 @@ export default function HomeScreen({ navigation, route }) {
                   >
                     {(railActiveId === 'dashboard' || railActiveId === 'notiser') && appMode !== 'project' ? (
                       <View style={{ flex: 1, minHeight: 0 }}>
-                        <LeftPanelRailHeader title="Startsida" />
+                        <LeftPanelRailHeader title="Startsida" icon="home-outline" />
                         <View style={{ padding: 16, paddingTop: 12 }}>
                           <Text style={{ fontSize: 12, color: '#94a3b8' }}>Översikt och senaste aktiviteter visas i innehållsområdet.</Text>
                         </View>
@@ -2371,7 +2374,7 @@ export default function HomeScreen({ navigation, route }) {
                       />
                     ) : railActiveId === 'planering' ? (
                       <View style={{ flex: 1, minHeight: 0 }}>
-                        <LeftPanelRailHeader title="Planering" />
+                        <LeftPanelRailHeader title="Planering" icon="calendar-outline" />
                         <View style={{ padding: 16, paddingTop: 12 }}>
                           <Text style={{ fontSize: 12, color: '#94a3b8' }}>
                             Veckoplanering och kapacitet. Huvudvyn visas i innehållsområdet.
@@ -2529,7 +2532,7 @@ export default function HomeScreen({ navigation, route }) {
                       </View>
                     ) : (
                       <View style={{ flex: 1, minHeight: 0 }}>
-                        <LeftPanelRailHeader title="Inställningar" />
+                        <LeftPanelRailHeader title="Inställningar" icon="settings-outline" />
                         <View style={{ padding: 16 }}>
                           <Text style={{ fontSize: 13, color: '#64748b' }}>Inställningar visas här.</Text>
                         </View>
@@ -2615,6 +2618,38 @@ export default function HomeScreen({ navigation, route }) {
                         : { backgroundColor: LAYOUT_2026.mainPanelBgNative, borderLeftWidth: 1, borderLeftColor: 'rgba(0, 0, 0, 0.2)' },
                     ]}
                   >
+                    {Platform.OS === 'web' && railActiveId !== 'planering' && (
+                      <TouchableOpacity
+                        onPress={() => setSidePanelCollapsed((c) => !c)}
+                        onMouseEnter={() => setLeftPanelPillHover(true)}
+                        onMouseLeave={() => setLeftPanelPillHover(false)}
+                        style={{
+                          position: 'absolute',
+                          left: -10,
+                          top: '50%',
+                          marginTop: -18,
+                          width: 20,
+                          height: 36,
+                          borderRadius: 6,
+                          backgroundColor: leftPanelPillHover ? '#475569' : '#334155',
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          zIndex: 20,
+                          shadowColor: '#000',
+                          shadowOffset: { width: 0, height: 1 },
+                          shadowOpacity: leftPanelPillHover ? 0.22 : 0.15,
+                          shadowRadius: 4,
+                          elevation: 6,
+                        }}
+                        accessibilityLabel={sidePanelCollapsed ? 'Öppna panel' : 'Stäng panel'}
+                      >
+                        <Ionicons
+                          name={sidePanelCollapsed ? 'chevron-forward' : 'chevron-back'}
+                          size={16}
+                          color="#fff"
+                        />
+                      </TouchableOpacity>
+                    )}
                     <MinimalTopbar
                       pageTitle={railActiveId === 'planering' ? 'Planering' : (selectedProjectSafe?.name || 'Startsida')}
                       pageTitleIcon={railActiveId === 'planering' ? <Ionicons name="calendar-outline" size={22} color="#475569" /> : null}

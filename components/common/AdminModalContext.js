@@ -72,10 +72,38 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
   const [createCompanyModalOpen, setCreateCompanyModalOpen] = useState(false);
   const selectionSavedListenerRef = useRef(null);
 
+  /** Stäng alla admin-modaler – endast en modal åt gången */
+  const closeAllModals = useCallback(() => {
+    setCustomersOpen(false);
+    setCustomersCompanyId('');
+    setContactRegistryOpen(false);
+    setContactRegistryCompanyId('');
+    setSuppliersOpen(false);
+    setSuppliersCompanyId('');
+    setByggdelOpen(false);
+    setByggdelCompanyId('');
+    setByggdelSelectionContext(null);
+    setKontoplanOpen(false);
+    setKontoplanCompanyId('');
+    setKontoplanSelectionContext(null);
+    setMallarOpen(false);
+    setMallarCompanyId('');
+    setAiPromptsOpen(false);
+    setAiPromptsCompanyId('');
+    setKategoriOpen(false);
+    setKategoriCompanyId('');
+    setKategoriSelectionContext(null);
+    setCompanyModalOpen(false);
+    setCompanyModalCompanyId('');
+    setCompanyModalInitialTab(null);
+    setCreateCompanyModalOpen(false);
+  }, []);
+
   const openCustomersModal = useCallback((companyId) => {
+    closeAllModals();
     setCustomersCompanyId(String(companyId || '').trim());
     setCustomersOpen(true);
-  }, []);
+  }, [closeAllModals]);
 
   const closeCustomersModal = useCallback(() => {
     setCustomersOpen(false);
@@ -83,9 +111,10 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
   }, []);
 
   const openContactRegistryModal = useCallback((companyId) => {
+    closeAllModals();
     setContactRegistryCompanyId(String(companyId || '').trim());
     setContactRegistryOpen(true);
-  }, []);
+  }, [closeAllModals]);
 
   const closeContactRegistryModal = useCallback(() => {
     setContactRegistryOpen(false);
@@ -93,9 +122,10 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
   }, []);
 
   const openSuppliersModal = useCallback((companyId) => {
+    closeAllModals();
     setSuppliersCompanyId(String(companyId || '').trim());
     setSuppliersOpen(true);
-  }, []);
+  }, [closeAllModals]);
 
   const closeSuppliersModal = useCallback(() => {
     setSuppliersOpen(false);
@@ -103,10 +133,11 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
   }, []);
 
   const openByggdelModal = useCallback((companyId, selectionContext = null) => {
+    closeAllModals();
     setByggdelCompanyId(String(companyId || '').trim());
     setByggdelSelectionContext(selectionContext ?? null);
     setByggdelOpen(true);
-  }, []);
+  }, [closeAllModals]);
 
   const closeByggdelModal = useCallback(() => {
     setByggdelOpen(false);
@@ -115,10 +146,11 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
   }, []);
 
   const openKontoplanModal = useCallback((companyId, selectionContext = null) => {
+    closeAllModals();
     setKontoplanCompanyId(String(companyId || '').trim());
     setKontoplanSelectionContext(selectionContext ?? null);
     setKontoplanOpen(true);
-  }, []);
+  }, [closeAllModals]);
 
   const closeKontoplanModal = useCallback(() => {
     setKontoplanOpen(false);
@@ -127,9 +159,10 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
   }, []);
 
   const openMallarModal = useCallback((companyId) => {
+    closeAllModals();
     setMallarCompanyId(String(companyId || '').trim());
     setMallarOpen(true);
-  }, []);
+  }, [closeAllModals]);
 
   const closeMallarModal = useCallback(() => {
     setMallarOpen(false);
@@ -137,9 +170,10 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
   }, []);
 
   const openAIPromptsModal = useCallback((companyId) => {
+    closeAllModals();
     setAiPromptsCompanyId(String(companyId || '').trim());
     setAiPromptsOpen(true);
-  }, []);
+  }, [closeAllModals]);
 
   const closeAIPromptsModal = useCallback(() => {
     setAiPromptsOpen(false);
@@ -147,10 +181,11 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
   }, []);
 
   const openKategoriModal = useCallback((companyId, selectionContext = null) => {
+    closeAllModals();
     setKategoriCompanyId(String(companyId || '').trim());
     setKategoriSelectionContext(selectionContext ?? null);
     setKategoriOpen(true);
-  }, []);
+  }, [closeAllModals]);
 
   const closeKategoriModal = useCallback(() => {
     setKategoriOpen(false);
@@ -159,10 +194,11 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
   }, []);
 
   const openCompanyModal = useCallback((companyId, initialTab = null) => {
+    closeAllModals();
     setCompanyModalCompanyId(String(companyId || '').trim());
     setCompanyModalInitialTab(initialTab || null);
     setCompanyModalOpen(true);
-  }, []);
+  }, [closeAllModals]);
 
   // Efter återkomst från tenant-inloggning (SharePoint-synk): trigga exchange om URL har code+state=tenant_, öppna sedan Företagsinställningar → SharePoint så att pickern visas
   const PENDING_SYNC_PICKER_KEY = 'azure_pending_sync_picker';
@@ -212,8 +248,9 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
   }, []);
 
   const openCreateCompanyModal = useCallback(() => {
+    closeAllModals();
     setCreateCompanyModalOpen(true);
-  }, []);
+  }, [closeAllModals]);
 
   const closeCreateCompanyModal = useCallback(() => {
     setCreateCompanyModalOpen(false);

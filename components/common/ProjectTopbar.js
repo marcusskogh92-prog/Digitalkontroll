@@ -33,22 +33,32 @@ export default function ProjectTopbar({ sections: sectionsProp, activeSection, o
   const { scrollY = 0 } = useProjectScroll();
   const sections = sortSections(sectionsProp || []);
   const scrollRef = useRef(null);
+  const wrapperRef = useRef(null);
 
   const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
-    if (!isWeb || !scrollRef.current) return;
-    const el = scrollRef.current;
-    const dom = el?.getScrollableNode?.() ?? el;
-    if (!dom || typeof dom.addEventListener !== 'function') return;
+    if (!isWeb || typeof document === 'undefined') return;
 
     const onWheel = (e) => {
+      const wrapper = document.getElementById('project-topbar-wheel');
+      if (!wrapper || !e.target || !wrapper.contains(e.target)) return;
       if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-      e.preventDefault();
-      dom.scrollLeft += e.deltaY;
+      const r = scrollRef.current;
+      const scrollNode = r?.getScrollableNode?.() ?? (typeof r?.scrollLeft !== 'undefined' ? r : null);
+      if (!scrollNode || typeof scrollNode.scrollLeft === 'undefined') return;
+      const maxLeft = scrollNode.scrollWidth - scrollNode.clientWidth;
+      const canScrollRight = maxLeft > 0 && scrollNode.scrollLeft < maxLeft;
+      const canScrollLeft = scrollNode.scrollLeft > 0;
+      const wantRight = e.deltaY > 0;
+      const willConsume = (wantRight && canScrollRight) || (!wantRight && canScrollLeft);
+      if (willConsume) e.preventDefault();
+      const next = Math.max(0, Math.min(maxLeft, scrollNode.scrollLeft + e.deltaY));
+      scrollNode.scrollLeft = next;
     };
-    dom.addEventListener('wheel', onWheel, { passive: false });
-    return () => dom.removeEventListener('wheel', onWheel);
+
+    document.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    return () => document.removeEventListener('wheel', onWheel, { capture: true });
   }, [isWeb]);
 
   if (sections.length === 0) return null;
@@ -57,6 +67,8 @@ export default function ProjectTopbar({ sections: sectionsProp, activeSection, o
 
   return (
     <View
+      ref={wrapperRef}
+      nativeID={isWeb ? 'project-topbar-wheel' : undefined}
       onLayout={onLayout}
       onMouseEnter={isWeb ? () => setBarHovered(true) : undefined}
       onMouseLeave={isWeb ? () => setBarHovered(false) : undefined}

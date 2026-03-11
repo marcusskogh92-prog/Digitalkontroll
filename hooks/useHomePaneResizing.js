@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, Platform } from 'react-native';
 
 // Hanterar vänster/höger kolumnbredder + collapse + pan-responders för HomeScreen
-const LEFT_PANEL_EXPANDED_DEFAULT = 280;
+const LEFT_PANEL_EXPANDED_DEFAULT = 300;
 const LEFT_PANEL_COLLAPSED_WIDTH = 64;
 const LEFT_PANEL_MIN_WIDTH = 180;
 const LEFT_PANEL_MAX_WIDTH = 480;

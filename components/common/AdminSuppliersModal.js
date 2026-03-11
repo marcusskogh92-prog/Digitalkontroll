@@ -248,8 +248,8 @@ const styles = StyleSheet.create({
   addModalFieldReadOnly: { borderWidth: 1, borderColor: '#E6E8EC', paddingVertical: 8, paddingHorizontal: 10, borderRadius: D.inputRadius, backgroundColor: '#F8FAFC' },
   editModalBox: { width: Platform.OS === 'web' ? 520 : '92%', maxWidth: 520, minHeight: Platform.OS === 'web' ? 380 : undefined },
   editModalContent: { padding: D.contentPadding, paddingBottom: 24 },
-  editModalAvbrytBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2' },
-  editModalSparaBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
+  editModalAvbrytBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: D.buttonCancelBorder, backgroundColor: D.buttonCancelBg },
+  editModalSparaBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: D.buttonSaveBg, borderWidth: 0 },
   footerBtn: {
     paddingVertical: D.buttonPaddingVertical,
     paddingHorizontal: D.buttonPaddingHorizontal,
@@ -259,7 +259,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   /** Stäng-knapp enligt golden rule: primär = bannerns färg (dimmad #2D3A4B), inte ljusgrå */
-  mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: D.buttonPrimaryBg, borderWidth: 0 },
+  mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: D.buttonCloseBg, borderWidth: 0 },
 });
 
 export default function AdminSuppliersModal({ visible, companyId, onClose }) {
@@ -1505,7 +1505,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
               disabled={contactEditSaving}
               {...(Platform.OS === 'web' ? { cursor: contactEditSaving ? 'not-allowed' : 'pointer' } : {})}
             >
-              <Text style={{ fontSize: 14, fontWeight: '500', color: '#b91c1c' }}>Avbryt</Text>
+              <Text style={{ fontSize: 14, fontWeight: '500', color: D.buttonCancelText }}>Avbryt</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.editModalSparaBtn}
@@ -1710,7 +1710,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                 <Text style={{ fontSize: 14, fontWeight: '500', color: '#0f172a' }}>Fortsätt redigera</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => { setAddModalUnsavedVisible(false); closeAddModal(); }} style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' }} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-                <Text style={{ fontSize: 14, fontWeight: '500', color: '#b91c1c' }}>Kasta ändringar</Text>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: D.buttonCancelText }}>Kasta ändringar</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => {

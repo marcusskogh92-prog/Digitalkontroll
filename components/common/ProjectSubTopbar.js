@@ -8,7 +8,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, LayoutAnimation, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { PRIMARY_TOPBAR_HEIGHT, SUB_TOPBAR, TOPBAR_ACCENT } from '../../constants/topbarTheme';
+import { PRIMARY_TOPBAR_HEIGHT, PRIMARY_TOPBAR, SUB_TOPBAR, TOPBAR_ACCENT } from '../../constants/topbarTheme';
 import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
 import ContextMenu from '../ContextMenu';
 
@@ -138,6 +138,7 @@ function DraggableNavItem({
 
   const style = [
     styles.navItem,
+    isHovered && !isActive && styles.navItemHovered,
     isDragging && styles.navItemDragging,
     canDrag && styles.navItemDraggable,
   ];
@@ -243,18 +244,27 @@ export default function ProjectSubTopbar({
   const scrollRef = useRef(null);
 
   useEffect(() => {
-    if (!isWeb || !scrollRef.current) return;
-    const el = scrollRef.current;
-    const dom = el?.getScrollableNode?.() ?? el;
-    if (!dom || typeof dom.addEventListener !== 'function') return;
+    if (!isWeb || typeof document === 'undefined') return;
 
     const onWheel = (e) => {
+      const wrapper = document.getElementById('project-subtopbar-wheel');
+      if (!wrapper || !e.target || !wrapper.contains(e.target)) return;
       if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-      e.preventDefault();
-      dom.scrollLeft += e.deltaY;
+      const r = scrollRef.current;
+      const scrollNode = r?.getScrollableNode?.() ?? (typeof r?.scrollLeft !== 'undefined' ? r : null);
+      if (!scrollNode || typeof scrollNode.scrollLeft === 'undefined') return;
+      const maxLeft = scrollNode.scrollWidth - scrollNode.clientWidth;
+      const canScrollRight = maxLeft > 0 && scrollNode.scrollLeft < maxLeft;
+      const canScrollLeft = scrollNode.scrollLeft > 0;
+      const wantRight = e.deltaY > 0;
+      const willConsume = (wantRight && canScrollRight) || (!wantRight && canScrollLeft);
+      if (willConsume) e.preventDefault();
+      const next = Math.max(0, Math.min(maxLeft, scrollNode.scrollLeft + e.deltaY));
+      scrollNode.scrollLeft = next;
     };
-    dom.addEventListener('wheel', onWheel, { passive: false });
-    return () => dom.removeEventListener('wheel', onWheel);
+
+    document.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    return () => document.removeEventListener('wheel', onWheel, { capture: true });
   }, [isWeb]);
 
   useEffect(() => {
@@ -396,6 +406,7 @@ export default function ProjectSubTopbar({
     <>
       <View
         ref={wrapperRef}
+        nativeID={isWeb ? 'project-subtopbar-wheel' : undefined}
         onMouseEnter={isWeb ? () => setBarHovered(true) : undefined}
         onMouseLeave={isWeb ? () => setBarHovered(false) : undefined}
         style={[
@@ -566,7 +577,11 @@ const styles = StyleSheet.create({
     minHeight: 32,
     justifyContent: 'center',
     flexWrap: 'nowrap',
-    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease' } : {}),
+    borderRadius: 6,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, background-color 0.15s ease' } : {}),
+  },
+  navItemHovered: {
+    backgroundColor: PRIMARY_TOPBAR.hoverBg ?? 'rgba(37, 99, 235, 0.05)',
   },
   navItemDraggable: {
     ...(Platform.OS === 'web' ? { cursor: 'grab' } : {}),

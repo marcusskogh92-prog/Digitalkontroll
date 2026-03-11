@@ -42,13 +42,13 @@ export default function InfoPopup({ visible, title = '', message = '', onClose, 
 }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
-  card: { backgroundColor: '#FFFFFF', borderRadius: 12, padding: 20, minWidth: '75%', borderWidth: 1, borderColor: '#E0E0E0', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 3 },
-  title: { fontSize: 18, fontWeight: '700', color: '#263238', marginBottom: 8, textAlign: 'center' },
-  message: { fontSize: 16, color: '#555', textAlign: 'center', marginTop: 4 },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center' },
+  card: { backgroundColor: '#FFFFFF', borderRadius: 8, padding: 20, minWidth: '75%', borderWidth: 1, borderColor: '#E0E0E0', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 30, shadowOffset: { width: 0, height: 10 }, elevation: 8 },
+  title: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 8, textAlign: 'center' },
+  message: { fontSize: 16, color: '#64748b', textAlign: 'center', marginTop: 4 },
   actions: { marginTop: 12, flexDirection: 'row', justifyContent: 'center' },
-  primaryBtn: { paddingVertical: 10, paddingHorizontal: 18, backgroundColor: '#263238', borderRadius: 8, marginRight: 10 },
+  primaryBtn: { paddingVertical: 10, paddingHorizontal: 18, backgroundColor: '#2D3A4B', borderRadius: 8, marginRight: 10 },
   primaryText: { color: '#fff', fontWeight: '700', letterSpacing: 0.4 },
-  closeBtn: { paddingVertical: 10, paddingHorizontal: 18, backgroundColor: '#D32F2F', borderRadius: 8, borderWidth: 1, borderColor: '#C62828' },
-  closeText: { color: '#FFFFFF', fontWeight: '700', letterSpacing: 0.3 },
+  closeBtn: { paddingVertical: 10, paddingHorizontal: 18, backgroundColor: '#f1f5f9', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' },
+  closeText: { color: '#0f172a', fontWeight: '600', letterSpacing: 0.3 },
 });

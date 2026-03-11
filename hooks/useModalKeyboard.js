@@ -16,8 +16,9 @@ export function useModalKeyboard(visible, onClose, onSave, options = {}) {
     const handleKeyDown = (e) => {
       if (disabled) return;
 
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' || e.key === 'Esc') {
         e.preventDefault();
+        e.stopPropagation();
         onClose?.();
         return;
       }
@@ -35,7 +36,7 @@ export function useModalKeyboard(visible, onClose, onSave, options = {}) {
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [visible, onClose, onSave, canSave, saving, disabled]);
 }

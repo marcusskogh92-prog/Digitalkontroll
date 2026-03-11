@@ -203,65 +203,51 @@ function isValidEmailLight(value) {
 function SubjectComboField({ value, onChange, colors, fwMed, disabled }) {
   const v = String(value || '');
   const chips = SUBJECT_SUGGESTIONS;
-  const CHIPS_ROW_HEIGHT = 34;
   const isDisabled = !!disabled;
 
   return (
-    <View style={{ width: '100%' }}>
+    <View style={{ width: '100%', gap: 6 }}>
       <TextInput
         value={v}
         onChangeText={isDisabled ? undefined : onChange}
         editable={!isDisabled}
-        placeholder="Exempel: Platsbesök stomme, Extra möte – stomlösning, Genomgång UE el"
+        placeholder="Titel på datumet"
         placeholderTextColor="#94A3B8"
         style={{
           borderWidth: 1,
           borderColor: '#E2E8F0',
-          borderRadius: 10,
-          paddingVertical: 9,
+          borderRadius: D.inputRadius ?? 6,
+          paddingVertical: 8,
           paddingHorizontal: 10,
-          fontSize: 13,
+          fontSize: 14,
           color: isDisabled ? colors.textSubtle : colors.text,
           backgroundColor: isDisabled ? '#F1F5F9' : '#fff',
           ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
         }}
       />
-
-      {/* Inline suggestions (fixed-height, no overlay, no dynamic expand). */}
-      <View style={{ marginTop: 8, height: CHIPS_ROW_HEIGHT, justifyContent: 'center' }}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', paddingRight: 4 }}>
-            {chips.map((label) => {
-              const isSelected = String(label) === String(v || '').trim();
-              return (
-                <Pressable
-                  key={label}
-                  onPress={() => {
-                    if (isDisabled) return;
-                    onChange?.(label);
-                  }}
-                  disabled={isDisabled}
-                  style={({ hovered, pressed }) => ({
-                    height: 28,
-                    paddingHorizontal: 10,
-                    borderRadius: 999,
-                    borderWidth: 1,
-                    borderColor: isSelected ? colors.blue : '#CBD5E1',
-                    backgroundColor: isDisabled ? '#F1F5F9' : (hovered || pressed ? '#F1F5F9' : '#fff'),
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 6,
-                    opacity: isDisabled ? 0.75 : 1,
-                  })}
-                >
-                  <Text style={{ fontSize: 12, fontWeight: fwMed, color: isSelected ? colors.blue : colors.textSubtle }} numberOfLines={1}>
-                    {label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </ScrollView>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <Text style={{ fontSize: 11, color: colors.textSubtle }}>Förslag:</Text>
+        {chips.map((label) => {
+          const isSelected = String(label) === String(v || '').trim();
+          return (
+            <Pressable
+              key={label}
+              onPress={() => { if (!isDisabled) onChange?.(label); }}
+              disabled={isDisabled}
+              style={({ hovered, pressed }) => ({
+                paddingVertical: 4,
+                paddingHorizontal: 8,
+                borderRadius: 6,
+                backgroundColor: isDisabled ? '#F1F5F9' : (isSelected ? 'rgba(25, 118, 210, 0.12)' : (hovered || pressed ? '#F1F5F9' : 'transparent')),
+                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+              })}
+            >
+              <Text style={{ fontSize: 12, fontWeight: fwMed, color: isSelected ? colors.blue : colors.textSubtle }} numberOfLines={1}>
+                {label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
     </View>
   );
@@ -532,7 +518,7 @@ function OccurrenceEditModal({
                               opacity: hovered || pressed ? 0.9 : 1,
                             })}
                           >
-                            <Ionicons name="trash-outline" size={16} color={colors.textSubtle} />
+                            <Ionicons name="trash-outline" size={16} color={colors.danger} />
                           </Pressable>
                         </View>
                       );
@@ -1101,47 +1087,37 @@ export default function DateModal({
 
             <ScrollView
               style={[ { flex: 1 }, Platform.OS === 'web' ? { overflowY: 'scroll' } : null ]}
-              contentContainerStyle={{ padding: D.contentPadding ?? 20, gap: 12 }}
+              contentContainerStyle={{ padding: D.contentPadding ?? 20, paddingBottom: 24, gap: 20 }}
               keyboardShouldPersistTaps="handled"
             >
-              <View
-                style={{
-                  gap: 10,
-                  padding: 12,
-                  borderWidth: 1,
-                  borderColor: '#E2E8F0',
-                  borderRadius: 12,
-                  backgroundColor: colors.bgMuted,
-                }}
-              >
-                {initial?.outlookEventId ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 10, backgroundColor: 'rgba(25, 118, 210, 0.08)', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(25, 118, 210, 0.22)' }}>
-                    <Text style={{ fontSize: 14 }} accessibilityLabel="Info">🔄</Text>
-                    <Text style={{ flex: 1, fontSize: 12, fontWeight: fwReg, color: colors.text }}>
-                      Detta möte är kopplat till Outlook. Ändringar skickas som uppdaterad kallelse.
-                    </Text>
-                  </View>
-                ) : null}
-                <View style={{ gap: 6 }}>
-                  <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>Rubrik / ämne</Text>
-                  <SubjectComboField
-                    value={title}
-                    onChange={(v) => {
-                      if (subjectLocked) return;
-                      setTitle(v);
-                    }}
-                    colors={colors}
-                    fwMed={fwMed}
-                    disabled={subjectLocked}
-                  />
-                  <Text style={{ fontSize: 12, color: colors.textSubtle }}>
-                    {subjectLocked
-                      ? 'Rubriken är låst eftersom datumet kommer från Projektinformationen.'
-                      : 'Skriv fri text eller välj ett förslag. Efter val kan texten redigeras fritt.'}
+              {initial?.outlookEventId ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 10, backgroundColor: 'rgba(25, 118, 210, 0.08)', borderRadius: 8, borderWidth: 1, borderColor: 'rgba(25, 118, 210, 0.22)' }}>
+                  <Text style={{ fontSize: 14 }} accessibilityLabel="Info">🔄</Text>
+                  <Text style={{ flex: 1, fontSize: 12, fontWeight: fwReg, color: colors.text }}>
+                    Detta möte är kopplat till Outlook. Ändringar skickas som uppdaterad kallelse.
                   </Text>
                 </View>
+              ) : null}
 
-                <View style={{ gap: 8 }}>
+              {/* Ämne – Outlook-stil: titel först, förslag diskret */}
+              <View style={{ gap: 6 }}>
+                <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>Ämne</Text>
+                <SubjectComboField
+                  value={title}
+                  onChange={(v) => { if (!subjectLocked) setTitle(v); }}
+                  colors={colors}
+                  fwMed={fwMed}
+                  disabled={subjectLocked}
+                />
+                {subjectLocked ? (
+                  <Text style={{ fontSize: 11, color: colors.textSubtle }}>
+                    Rubriken är låst (kommer från Projektinformationen).
+                  </Text>
+                ) : null}
+              </View>
+
+              {/* Datum + tid – en block, utan extra box */}
+              <View style={{ gap: 8 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                       <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>{isSeries ? 'Datum + tid (flera)' : 'Datum + tid'}</Text>
@@ -1320,28 +1296,32 @@ export default function DateModal({
                               fwMed={fwMed}
                             />
                           </View>
-                          <Pressable
-                            onPress={() => addDuration(30)}
-                            style={({ hovered, pressed }) => ({
-                              paddingVertical: 6,
-                              paddingHorizontal: 10,
-                              borderRadius: 8,
-                              backgroundColor: hovered || pressed ? '#155FB5' : '#1976D2',
-                            })}
-                          >
-                            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '500' }}>+30 min</Text>
-                          </Pressable>
-                          <Pressable
-                            onPress={() => addDuration(60)}
-                            style={({ hovered, pressed }) => ({
-                              paddingVertical: 6,
-                              paddingHorizontal: 10,
-                              borderRadius: 8,
-                              backgroundColor: hovered || pressed ? '#155FB5' : '#1976D2',
-                            })}
-                          >
-                            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '500' }}>+60 min</Text>
-                          </Pressable>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <Pressable
+                              onPress={() => addDuration(30)}
+                              style={({ hovered, pressed }) => ({
+                                paddingVertical: 4,
+                                paddingHorizontal: 8,
+                                borderRadius: 6,
+                                backgroundColor: hovered || pressed ? '#EFF6FF' : 'transparent',
+                                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                              })}
+                            >
+                              <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.blue }}>+30 min</Text>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => addDuration(60)}
+                              style={({ hovered, pressed }) => ({
+                                paddingVertical: 4,
+                                paddingHorizontal: 8,
+                                borderRadius: 6,
+                                backgroundColor: hovered || pressed ? '#EFF6FF' : 'transparent',
+                                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                              })}
+                            >
+                              <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.blue }}>+60 min</Text>
+                            </Pressable>
+                          </View>
                         </>
                       )}
                     </View>
@@ -1353,10 +1333,9 @@ export default function DateModal({
                     </Text>
                   )}
 
-                  <Text style={{ fontSize: 12, color: colors.textSubtle }}>
-                    {isSeries ? 'Tid kan anges per tillfälle (öppna ett tillfälle).' : 'Tid är valfri men rekommenderas för möten och platsbesök.'}
+                  <Text style={{ fontSize: 11, color: colors.textSubtle }}>
+                    {isSeries ? 'Tid kan anges per tillfälle (öppna ett tillfälle).' : 'Tid valfri – rekommenderas för möten och platsbesök.'}
                   </Text>
-                </View>
               </View>
 
               {!isSeries ? null : (
@@ -1469,16 +1448,7 @@ export default function DateModal({
                 </View>
               )}
 
-              <View
-                style={{
-                  gap: 10,
-                  padding: 12,
-                  borderWidth: 1,
-                  borderColor: '#E2E8F0',
-                  borderRadius: 12,
-                  backgroundColor: colors.bgMuted,
-                }}
-              >
+              <View style={{ gap: 6 }}>
                 <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>Plats (valfritt)</Text>
                 <TextInput
                   value={location}
@@ -1488,8 +1458,8 @@ export default function DateModal({
                   style={{
                     borderWidth: 1,
                     borderColor: '#E2E8F0',
-                    borderRadius: 10,
-                    paddingVertical: 9,
+                    borderRadius: D.inputRadius ?? 6,
+                    paddingVertical: 8,
                     paddingHorizontal: 10,
                     fontSize: 13,
                     color: colors.text,
@@ -1499,16 +1469,7 @@ export default function DateModal({
                 />
               </View>
 
-              <View
-                style={{
-                  gap: 10,
-                  padding: 12,
-                  borderWidth: 1,
-                  borderColor: '#E2E8F0',
-                  borderRadius: 12,
-                  backgroundColor: colors.bgMuted,
-                }}
-              >
+              <View style={{ gap: 6 }}>
                 <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>Beskrivning (valfritt)</Text>
                 <TextInput
                   value={description}
@@ -1519,13 +1480,13 @@ export default function DateModal({
                   style={{
                     borderWidth: 1,
                     borderColor: '#E2E8F0',
-                    borderRadius: 10,
-                    paddingVertical: 9,
+                    borderRadius: D.inputRadius ?? 6,
+                    paddingVertical: 8,
                     paddingHorizontal: 10,
                     fontSize: 13,
                     color: colors.text,
                     backgroundColor: '#fff',
-                    minHeight: 84,
+                    minHeight: 72,
                     textAlignVertical: 'top',
                     ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
                   }}
@@ -1534,16 +1495,7 @@ export default function DateModal({
 
               {/* Participants should be available for all types (incl. Platsbesök & generic datum). */}
               {isSeries ? null : (
-                <View
-                  style={{
-                    gap: 10,
-                    padding: 12,
-                    borderWidth: 1,
-                    borderColor: '#E2E8F0',
-                    borderRadius: 12,
-                    backgroundColor: colors.bgMuted,
-                  }}
-                >
+                <View style={{ gap: 8 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                     <View style={{ minWidth: 0, flex: 1 }}>
                       <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>Deltagare (valfritt)</Text>
@@ -1610,7 +1562,7 @@ export default function DateModal({
                                   opacity: hovered || pressed ? 0.9 : 1,
                                 })}
                               >
-                                <Ionicons name="trash-outline" size={16} color={colors.textSubtle} />
+                                <Ionicons name="trash-outline" size={16} color={colors.danger} />
                               </Pressable>
                             </View>
                           );
@@ -1641,7 +1593,7 @@ export default function DateModal({
                   >
                     {({ hovered, pressed }) => (
                       <>
-                        <Ionicons name="trash-outline" size={16} color={hovered || pressed ? colors.danger : colors.textSubtle} />
+                        <Ionicons name="trash-outline" size={16} color={colors.danger} />
                         <Text style={{ fontSize: 12, fontWeight: fwMed, color: hovered || pressed ? colors.danger : colors.textSubtle }}>Ta bort</Text>
                       </>
                     )}

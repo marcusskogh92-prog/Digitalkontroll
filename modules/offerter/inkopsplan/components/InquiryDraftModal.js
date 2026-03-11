@@ -1,6 +1,6 @@
 /**
  * Generell förfrågan (AI-analys) – modal enligt golden rules 2026.
- * ModalBase + MODAL_DESIGN_2026: mörk kompakt banner, primärknapp dimmad banner, Stäng dimmad röd.
+ * ModalBase + MODAL_DESIGN_2026: ljus kompakt banner (#F8FAFC), primärknapp #2D3A4B, Stäng diskret.
  */
 
 import { Ionicons } from '@expo/vector-icons';

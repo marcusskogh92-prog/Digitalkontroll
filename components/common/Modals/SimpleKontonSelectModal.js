@@ -125,25 +125,25 @@ const styles = StyleSheet.create({
     paddingVertical: D.buttonPaddingVertical,
     paddingHorizontal: D.buttonPaddingHorizontal,
     borderRadius: D.buttonRadius,
-    backgroundColor: '#fef2f2',
-    borderWidth: 1,
-    borderColor: '#fecaca',
+    borderWidth: 0,
+    backgroundColor: D.buttonCloseBg,
   },
   btnStangText: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#b91c1c',
+    color: D.buttonCloseColor,
   },
   btnSpara: {
     paddingVertical: D.buttonPaddingVertical,
     paddingHorizontal: D.buttonPaddingHorizontal,
     borderRadius: D.buttonRadius,
-    backgroundColor: '#475569',
+    borderWidth: 0,
+    backgroundColor: D.buttonSaveBg,
   },
   btnSparaText: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#fff',
+    color: D.buttonSaveColor,
   },
 });
 

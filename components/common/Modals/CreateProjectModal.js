@@ -29,11 +29,13 @@ const BANNER = MODAL_DESIGN_2026?.headerNeutralCompact ?? {
   minHeight: 28,
   maxHeight: 28,
 };
-const BANNER_BG = MODAL_DESIGN_2026?.headerNeutral?.backgroundColor ?? '#1E2A38';
-const BANNER_BORDER = MODAL_DESIGN_2026?.headerNeutral?.borderBottomColor ?? 'rgba(255,255,255,0.1)';
+const BANNER_BG = MODAL_DESIGN_2026?.headerNeutral?.backgroundColor ?? '#F8FAFC';
+const BANNER_BORDER = MODAL_DESIGN_2026?.headerNeutral?.borderBottomColor ?? '#E2E8F0';
 const BANNER_TITLE_FONT = MODAL_DESIGN_2026?.headerNeutralCompactTitleFontSize ?? 12;
-const BANNER_TITLE_WEIGHT = MODAL_DESIGN_2026?.headerNeutralCompactTitleFontWeight ?? '400';
+const BANNER_TITLE_WEIGHT = MODAL_DESIGN_2026?.headerNeutralCompactTitleFontWeight ?? '600';
 const BANNER_SUBTITLE_FONT = MODAL_DESIGN_2026?.headerNeutralSubtitleFontSize ?? 12;
+const BANNER_TEXT_COLOR = MODAL_DESIGN_2026?.headerNeutralTextColor ?? '#0F172A';
+const BANNER_SUBTITLE_COLOR = MODAL_DESIGN_2026?.headerNeutralSubtitleOpacity != null ? 'rgba(15,23,42,0.85)' : '#64748B';
 const BANNER_ICON_PX = MODAL_DESIGN_2026?.headerNeutralCompactIconPx ?? 14;
 const BANNER_CLOSE_PX = MODAL_DESIGN_2026?.headerNeutralCompactCloseIconPx ?? 18;
 const FOOTER_BG = '#fff';
@@ -710,15 +712,15 @@ export default function CreateProjectModal({
           >
             <View style={styles.bannerLeft}>
               <View style={styles.bannerIcon}>
-                <Ionicons name={isEditMode ? 'pencil-outline' : 'add-circle-outline'} size={BANNER_ICON_PX} color="#fff" />
+                <Ionicons name={isEditMode ? 'pencil-outline' : 'add-circle-outline'} size={BANNER_ICON_PX} color={BANNER_TEXT_COLOR} />
               </View>
               <Text style={styles.bannerTitle} numberOfLines={1}>
                 {isEditMode ? 'Ändra projekt' : 'Skapa nytt projekt'}
-                <Text style={styles.bannerSubtitleInline}> – {isEditMode ? 'Projektnummer, namn och lagring' : 'Projektnummer, plats och struktur'}</Text>
+                <Text style={styles.bannerSubtitleInline}> • {isEditMode ? 'Projektnummer, namn och lagring' : 'Projektnummer, plats och struktur'}</Text>
               </Text>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.bannerClose} accessibilityLabel="Stäng" {...(Platform.OS === 'web' ? { onMouseDown: (e) => e.stopPropagation() } : {})}>
-              <Ionicons name="close" size={BANNER_CLOSE_PX} color="#fff" />
+              <Ionicons name="close" size={BANNER_CLOSE_PX} color={BANNER_TEXT_COLOR} />
             </TouchableOpacity>
           </View>
 
@@ -943,15 +945,6 @@ export default function CreateProjectModal({
                       detailDescription: 'Struktur för avslut och överlämning. Denna fas är under uppbyggnad och aktiveras i en senare version.',
                       disabled: true,
                     },
-                    {
-                      key: 'free',
-                      name: 'Valfri',
-                      color: '#D97706',
-                      icon: 'folder-open-outline',
-                      description: 'Endast projektmapp.',
-                      detailDescription: 'Skapar bara projektmappen utan systemmappar. Använd om du vill styra mappstrukturen helt själv.',
-                      disabled: false,
-                    },
                   ];
 
                   // I redigeringsläge: visa alltid rätt kort som valt (från initialProject.phase) så hänglåset syns
@@ -1111,7 +1104,7 @@ export default function CreateProjectModal({
                   >
                     <Text style={styles.locationExplorerBannerTitle}>Välj lagringsplats</Text>
                     <TouchableOpacity onPress={closeLocationPicker} style={styles.locationExplorerClose} accessibilityLabel="Stäng" {...(Platform.OS === 'web' ? { onMouseDown: (e) => e.stopPropagation() } : {})}>
-                      <Ionicons name="close" size={BANNER_CLOSE_PX} color="#fff" />
+                      <Ionicons name="close" size={BANNER_CLOSE_PX} color={BANNER_TEXT_COLOR} />
                     </TouchableOpacity>
                   </View>
                     <View style={styles.locationExplorerBody}>
@@ -1477,24 +1470,24 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 6,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
   },
   bannerTitle: {
     fontSize: BANNER_TITLE_FONT,
     fontWeight: BANNER_TITLE_WEIGHT,
-    color: '#fff',
+    color: BANNER_TEXT_COLOR,
   },
   bannerSubtitle: {
     fontSize: BANNER_SUBTITLE_FONT,
-    color: 'rgba(255,255,255,0.85)',
+    color: BANNER_SUBTITLE_COLOR,
     marginTop: 2,
   },
   bannerSubtitleInline: {
     fontSize: BANNER_SUBTITLE_FONT,
     fontWeight: '400',
-    color: 'rgba(255,255,255,0.85)',
+    color: BANNER_SUBTITLE_COLOR,
   },
   bannerClose: {
     padding: 6,
@@ -1735,14 +1728,15 @@ const styles = StyleSheet.create({
   },
   statusTitle: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
+    color: '#0F172A',
   },
   statusItems: {
     marginLeft: 28,
   },
   statusItemText: {
     fontSize: 12,
-    color: '#374151',
+    color: '#334155',
   },
   circle: {
     width: 20,

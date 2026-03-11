@@ -1652,7 +1652,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                                       style={styles.planeringRowDelete}
                                       accessibilityLabel={`Radera ${tab.name}`}
                                     >
-                                      <Ionicons name="trash-outline" size={18} color="#94a3b8" />
+                                      <Ionicons name="trash-outline" size={18} color="#b91c1c" />
                                     </TouchableOpacity>
                                   </View>
                                 </View>

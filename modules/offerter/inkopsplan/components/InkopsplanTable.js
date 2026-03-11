@@ -5,7 +5,8 @@ import { MODAL_DESIGN_2026 } from '../../../../constants/modalDesign2026';
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../../../constants/tableLayout';
 
 import { addManualRow } from '../inkopsplanService';
-import { useInkopsplanUserPrefs } from '../useInkopsplanUserPrefs';
+import { DEFAULT_COLUMN_WIDTHS, useInkopsplanUserPrefs } from '../useInkopsplanUserPrefs';
+import InkopsplanColumnsModal from './InkopsplanColumnsModal';
 import InkopsplanRow from './InkopsplanRow';
 import InkopsplanRowExpanded from './InkopsplanRowExpanded';
 
@@ -17,7 +18,7 @@ const RESIZE_HANDLE_HIT_WIDTH = 14;
 const CHARS_TO_WIDTH = 8;
 const CELL_PADDING = COLUMN_PADDING_LEFT + COLUMN_PADDING_RIGHT + 12;
 const COL_EXPAND_WIDTH = 36;
-const DEFAULT_INKOP_WIDTHS = { bd: 72, name: 160, konto: 88, kategori: 100, status: 76, ansvarig: 90, request: 100 };
+const DEFAULT_INKOP_WIDTHS = DEFAULT_COLUMN_WIDTHS;
 
 function safeText(v) {
   const s = String(v ?? '').trim();
@@ -99,6 +100,7 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
 }, ref) {
 
   const [savingManual, setSavingManual] = useState(false);
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
 
   const COLUMN_DEFS = useMemo(() => ([
     { id: 'bd', label: 'BD' },
@@ -110,10 +112,28 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
     { id: 'request', label: 'Förfrågan' },
   ]), []);
 
-  const { prefs, setPrefs } = useInkopsplanUserPrefs({ companyId, projectId });
+  const { prefs, setPrefs, loadingPrefs } = useInkopsplanUserPrefs({ companyId, projectId });
   const [columnWidths, setColumnWidths] = useState(DEFAULT_INKOP_WIDTHS);
   const resizeRef = useRef({ column: null, startX: 0, startWidth: 0 });
   const filteredListRef = useRef([]);
+
+  useEffect(() => {
+    if (loadingPrefs || !prefs?.columnWidths) return;
+    setColumnWidths((prev) => {
+      const next = { ...prev };
+      Object.keys(prefs.columnWidths || {}).forEach((k) => {
+        if (prefs.columnWidths[k] != null) next[k] = prefs.columnWidths[k];
+      });
+      return next;
+    });
+  }, [loadingPrefs, prefs?.columnWidths]);
+
+  useEffect(() => {
+    if (loadingPrefs || !prefs?.columnWidths) return;
+    const same = Object.keys(DEFAULT_INKOP_WIDTHS).every((k) => columnWidths[k] === prefs.columnWidths[k]);
+    if (same) return;
+    setPrefs({ columnWidths });
+  }, [columnWidths, loadingPrefs, setPrefs, prefs?.columnWidths]);
 
   const w = columnWidths;
   const col = useCallback((key) => ({ width: w[key], minWidth: w[key], flexShrink: 0 }), [w]);
@@ -195,6 +215,7 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
       if (!savingManual) handleAddNewManualRow();
     },
     saveManualRow: () => {},
+    openColumnPicker: () => setShowColumnPicker(true),
   }), [savingManual]);
 
   const list = Array.isArray(rows) ? rows : [];
@@ -301,10 +322,13 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
     filteredListRef.current = filteredSorted;
   }, [filteredSorted]);
 
+  const visibleColumnIds = useMemo(() => COLUMN_DEFS.filter((c) => visibleColumns[c.id]).map((c) => c.id), [COLUMN_DEFS, visibleColumns]);
+
   const totalTableWidth = useMemo(() => {
-    const sum = COL_EXPAND_WIDTH + (w.bd || 0) + (w.name || 0) + (w.konto || 0) + (w.kategori || 0) + (w.status || 0) + (w.ansvarig || 0) + (w.request || 0);
-    return sum + 7 * RESIZE_HANDLE_HIT_WIDTH;
-  }, [w]);
+    let sum = COL_EXPAND_WIDTH;
+    visibleColumnIds.forEach((key) => { sum += w[key] || 0; });
+    return sum + Math.max(1, visibleColumnIds.length) * RESIZE_HANDLE_HIT_WIDTH;
+  }, [w, visibleColumnIds]);
 
   const handleSort = useCallback((columnId) => {
     const key = columnId === 'bd' ? 'nr' : columnId;
@@ -324,54 +348,31 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
         <View style={[styles.tableHeader, isWeb() && styles.tableHeaderGapWeb]}>
           <View style={[styles.headerCell, tableStyles.colExpand]} />
           {isWeb() && <View style={styles.resizeHandle}><View style={styles.resizeHandleLine} /></View>}
-          <View style={[styles.headerCell, col('bd')]}>
-            <Pressable onPress={() => handleSort('bd')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
-              <Text style={[styles.headerText, isSorted('bd') && styles.headerTextSorted]} numberOfLines={1}>BD</Text>
-              {isSorted('bd') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
-            </Pressable>
-          </View>
-          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('bd', e)} onDoubleClick={() => widenColumn('bd')}><View style={styles.resizeHandleLine} /></View>}
-          <View style={[styles.headerCell, col('name')]}>
-            <Pressable onPress={() => handleSort('name')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
-              <Text style={[styles.headerText, isSorted('name') && styles.headerTextSorted]} numberOfLines={1}>Benämning</Text>
-              {isSorted('name') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
-            </Pressable>
-          </View>
-          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('name', e)} onDoubleClick={() => widenColumn('name')}><View style={styles.resizeHandleLine} /></View>}
-          <View style={[styles.headerCell, col('konto')]}>
-            <Pressable onPress={() => handleSort('konto')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
-              <Text style={[styles.headerText, isSorted('konto') && styles.headerTextSorted]} numberOfLines={1}>Konto</Text>
-              {isSorted('konto') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
-            </Pressable>
-          </View>
-          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('konto', e)} onDoubleClick={() => widenColumn('konto')}><View style={styles.resizeHandleLine} /></View>}
-          <View style={[styles.headerCell, col('kategori')]}>
-            <Pressable onPress={() => handleSort('kategori')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
-              <Text style={[styles.headerText, isSorted('kategori') && styles.headerTextSorted]} numberOfLines={1}>Kategori</Text>
-              {isSorted('kategori') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
-            </Pressable>
-          </View>
-          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('kategori', e)} onDoubleClick={() => widenColumn('kategori')}><View style={styles.resizeHandleLine} /></View>}
-          <View style={[styles.headerCell, col('status')]}>
-            <Pressable onPress={() => handleSort('status')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
-              <Text style={[styles.headerText, isSorted('status') && styles.headerTextSorted]} numberOfLines={1}>Status</Text>
-              {isSorted('status') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
-            </Pressable>
-          </View>
-          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('status', e)} onDoubleClick={() => widenColumn('status')}><View style={styles.resizeHandleLine} /></View>}
-          <View style={[styles.headerCell, col('ansvarig')]}>
-            <Pressable onPress={() => handleSort('ansvarig')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
-              <Text style={[styles.headerText, isSorted('ansvarig') && styles.headerTextSorted]} numberOfLines={1}>Ansvarig</Text>
-              {isSorted('ansvarig') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
-            </Pressable>
-          </View>
-          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('ansvarig', e)} onDoubleClick={() => widenColumn('ansvarig')}><View style={styles.resizeHandleLine} /></View>}
-          <View style={[styles.headerCell, col('request')]}>
-            <Pressable onPress={() => handleSort('request')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
-              <Text style={[styles.headerText, isSorted('request') && styles.headerTextSorted]} numberOfLines={1}>Förfrågan</Text>
-              {isSorted('request') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
-            </Pressable>
-          </View>
+          {COLUMN_DEFS.map((def) => {
+            const colId = def.id;
+            if (!visibleColumns[colId]) return null;
+            return (
+              <View key={colId}>
+                <View style={[styles.headerCell, col(colId)]}>
+                  <Pressable onPress={() => handleSort(colId)} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
+                    <Text style={[styles.headerText, isSorted(colId) && styles.headerTextSorted]} numberOfLines={1}>{def.label}</Text>
+                    {isSorted(colId) ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
+                  </Pressable>
+                </View>
+                {isWeb() ? (
+                  <Pressable
+                    style={styles.resizeHandle}
+                    onMouseDown={(e) => startResize(colId, e)}
+                    onDoubleClick={() => widenColumn(colId)}
+                    accessibilityLabel="Justera kolumnbredd: dra för att ändra, dubbelklicka för att anpassa till innehåll"
+                    {...(isWeb() ? { title: 'Dra för att ändra bredd, dubbelklicka för att anpassa till innehåll' } : {})}
+                  >
+                    <View style={styles.resizeHandleLine} />
+                  </Pressable>
+                ) : null}
+              </View>
+            );
+          })}
           <View style={styles.cellSpacer} />
         </View>
 
@@ -397,6 +398,7 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
                   onToggleExpand={onToggleRowExpand}
                   onRowContextMenu={onRowContextMenu}
                   tableStyles={tableStyles}
+                  visibleColumns={visibleColumns}
                   isAlt={idx % 2 === 1}
                   companyId={companyId}
                   projectId={projectId}
@@ -413,6 +415,7 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
                       selectedSupplierKey={selectedSupplierKey}
                       onSelectSupplier={onSelectSupplier}
                       onSupplierContextMenu={onSupplierContextMenu}
+                      onRowsChanged={onRowsChanged}
                     />
                   </View>
                 ) : null}
@@ -421,6 +424,17 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
           })}
         </View>
       </View>
+
+      <InkopsplanColumnsModal
+        visible={showColumnPicker}
+        onClose={() => setShowColumnPicker(false)}
+        columns={COLUMN_DEFS}
+        selectedColumnIds={Array.isArray(prefs?.visibleColumns) ? prefs.visibleColumns : []}
+        onSave={(out) => {
+          setPrefs({ visibleColumns: out });
+          setShowColumnPicker(false);
+        }}
+      />
     </View>
   );
 });
@@ -440,15 +454,16 @@ const styles = StyleSheet.create({
     overflow: 'visible',
     backgroundColor: TABLE.tableRowBackgroundColor,
   },
+  /** Inköpsraden (tabellhuvud) – mer markerad grå än ämnesraden ovanför */
   tableHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     minHeight: 44,
     paddingVertical: 12,
     paddingHorizontal: TABLE.tableCellPaddingHorizontal,
-    backgroundColor: TABLE.tableHeaderBackgroundColor,
+    backgroundColor: '#E2E8F0',
     borderBottomWidth: 1,
-    borderBottomColor: TABLE.tableHeaderBorderColor,
+    borderBottomColor: '#CBD5E1',
   },
   headerCell: {
     flexDirection: 'row',
@@ -527,6 +542,7 @@ const styles = StyleSheet.create({
     paddingLeft: COLUMN_PADDING_LEFT,
     paddingRight: COLUMN_PADDING_RIGHT,
     justifyContent: 'center',
+    alignItems: 'flex-start',
     minWidth: 0,
   },
   tableCellMuted: {

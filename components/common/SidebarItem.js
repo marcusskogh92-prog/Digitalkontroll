@@ -37,9 +37,19 @@ export default function SidebarItem({
   onHoverIn,
   onHoverOut,
   iconOnly = false,
+  /** Optional override for context panel: hover background color */
+  hoverBg,
+  /** Optional override for context panel: item border radius */
+  itemBorderRadius,
+  /** Optional override for context panel: row min height */
+  itemMinHeight,
+  /** Optional override for context panel: margin below row */
+  itemMarginBottom,
 }) {
   const showCount = !iconOnly && typeof count === 'number' && Number.isFinite(count);
   const basePaddingHorizontal = LEFT_NAV.rowPaddingHorizontal;
+  const effectiveHoverBg = hoverBg ?? LEFT_NAV.hoverBg;
+  const effectiveBorderRadius = itemBorderRadius ?? LEFT_NAV.rowBorderRadius;
 
   const isWeb = Platform.OS === 'web';
 
@@ -61,10 +71,10 @@ export default function SidebarItem({
         const backgroundColor = active
           ? LEFT_NAV.activeBg
           : isHovered
-            ? LEFT_NAV.hoverBg
+            ? effectiveHoverBg
             : 'transparent';
 
-        const borderRadius = squareCorners ? 0 : LEFT_NAV.rowBorderRadius;
+        const borderRadius = squareCorners ? 0 : effectiveBorderRadius;
 
         const isPaddingIndent = indentMode === 'padding';
         const paddingLeft = isPaddingIndent ? basePaddingHorizontal + Math.max(0, indent) : undefined;
@@ -81,6 +91,8 @@ export default function SidebarItem({
             ...(isPaddingIndent && !iconOnly ? { paddingLeft, paddingRight } : {}),
             ...(iconOnly ? { paddingLeft: 0, paddingRight: 0, justifyContent: 'center' } : {}),
             ...(widthStyle || {}),
+            ...(itemMinHeight != null ? { minHeight: itemMinHeight } : {}),
+            ...(itemMarginBottom != null ? { marginBottom: itemMarginBottom } : {}),
             opacity: disabled ? 0.6 : 1,
             backgroundColor,
             borderLeftColor: active ? LEFT_NAV.activeBorder : 'transparent',

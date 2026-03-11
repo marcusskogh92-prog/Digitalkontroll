@@ -1,6 +1,6 @@
 /**
  * Modal design – en golden rule för alla modaler.
- * Referens: AdminCreateCompanyModal (Skapa nytt företag). Mörk banner, primärknapp = bannerns färg (dimmad), ingen ljusblå.
+ * Referens: Lägg till leverantör (StandardModal) – ljus banner #F8FAFC, tunn, ingen bakgrund runt ikon/X.
  * Se docs/MODAL_GOLDEN_RULE.md.
  */
 
@@ -37,35 +37,35 @@ export const MODAL_DESIGN_2026 = {
   titleColor: '#0f172a',
   subtitleFontSize: 13,
   subtitleColor: '#64748b',
-  /** Header – neutral (mörk banner). Standard: #1E2A38, vit text. */
+  /** Header – neutral (ljus banner). Samma som Lägg till leverantör / StandardModal: #F8FAFC, tunn, ingen bakgrund runt ikon/X. */
   headerNeutral: {
-    backgroundColor: '#1E2A38',
+    backgroundColor: '#F8FAFC',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
+    borderBottomColor: '#E2E8F0',
     paddingVertical: 5,
-    paddingHorizontal: 14,
-    minHeight: 38,
-    maxHeight: 38,
+    paddingHorizontal: 12,
+    minHeight: 32,
+    maxHeight: 40,
   },
-  headerNeutralTitleFontSize: 15,
+  headerNeutralTitleFontSize: 14,
   headerNeutralTitleFontWeight: '600',
   headerNeutralTitleLineHeight: 18,
   headerNeutralSubtitleFontSize: 12,
   headerNeutralSubtitleLineHeight: 16,
   headerNeutralSubtitleOpacity: 0.85,
-  headerNeutralTextColor: '#fff',
+  headerNeutralTextColor: '#0F172A',
   headerNeutralIconSize: 17,
-  headerNeutralCloseIconColor: '#fff',
-  headerNeutralCloseBtnHover: 'rgba(255,255,255,0.12)',
-  /** Standard kompakt banner – samma som Leverantörer och Företagsinställningar. 28px höjd, titel 12px normal. ModalBase: headerVariant="neutralCompact". */
+  headerNeutralCloseIconColor: '#0F172A',
+  headerNeutralCloseBtnHover: 'rgba(0,0,0,0.06)',
+  /** Kompakt banner – lite högre vid titel+undertitel. Samma ljusa färg. ModalBase: headerVariant="neutralCompact". */
   headerNeutralCompact: {
-    paddingVertical: 4,
+    paddingVertical: 6,
     paddingHorizontal: 12,
-    minHeight: 28,
-    maxHeight: 28,
+    minHeight: 34,
+    maxHeight: 44,
   },
   headerNeutralCompactTitleFontSize: 12,
-  headerNeutralCompactTitleFontWeight: '400',
+  headerNeutralCompactTitleFontWeight: '600',
   headerNeutralCompactTitleLineHeight: 16,
   headerNeutralCompactIconSize: 22,
   headerNeutralCompactIconPx: 14,
@@ -94,11 +94,21 @@ export const MODAL_DESIGN_2026 = {
     paddingHorizontal: 24,
   },
 
-  /** Knappar – radius 6, inga pill. Primär = bannerns färg (dimmad), inte ljusblå. */
+  /** Knappar – radius 6, inga pill. Enhetligt i hela systemet. */
   buttonRadius: 6,
   buttonPaddingVertical: 6,
   buttonPaddingHorizontal: 18,
-  /** Primärknapp (Spara/Skapa): dimmad bannern #1E2A38 – golden rule enhetlig med banner */
+  /** Stäng – grå (enhetlig i alla modaler) */
+  buttonCloseBg: '#475569',
+  buttonCloseColor: '#fff',
+  /** Avbryt – dimmad röd */
+  buttonCancelBg: '#fef2f2',
+  buttonCancelBorder: '#fecaca',
+  buttonCancelText: '#b91c1c',
+  /** Spara – dimmad grön */
+  buttonSaveBg: '#15803d',
+  buttonSaveColor: '#fff',
+  /** Primärknapp (t.ex. Skapa) – mörk; Spara i formulär använd buttonSaveBg */
   buttonPrimaryBg: '#2D3A4B',
   buttonPrimaryColor: '#fff',
   buttonPrimaryFontWeight: '500',

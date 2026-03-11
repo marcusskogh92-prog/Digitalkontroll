@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
 
 const SystemModalContext = React.createContext(null);
@@ -8,6 +8,18 @@ function makeId() {
 }
 
 function SystemModalHost({ modalState, requestClose }) {
+  useEffect(() => {
+    if (!modalState || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        requestClose();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [modalState, requestClose]);
+
   if (!modalState) return null;
 
   const POS = Platform.OS === 'web' ? 'fixed' : 'absolute';

@@ -3205,7 +3205,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                   ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                 })}
               >
-                <Ionicons name={showDeleted ? 'trash' : 'trash-outline'} size={16} color={COLORS.textSubtle} />
+                <Ionicons name={showDeleted ? 'trash' : 'trash-outline'} size={16} color={COLORS.danger} />
                 <Text style={{ fontSize: 13, fontWeight: FW_MED, color: COLORS.textMuted }} numberOfLines={1}>
                   Visa raderade
                 </Text>

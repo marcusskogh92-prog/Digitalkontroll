@@ -14,11 +14,17 @@ const ALL_COLUMNS = ['bd', 'name', 'konto', 'kategori', 'status', 'ansvarig', 'r
 
 const ALL_SORT_KEYS = ['type', 'nr', 'name', 'bd', 'konto', 'kategori', 'status', 'ansvarig', 'request'];
 
+const MIN_COLUMN_WIDTH = 60;
+const MAX_COLUMN_WIDTH = 600;
+
+export const DEFAULT_COLUMN_WIDTHS = { bd: 72, name: 160, konto: 88, kategori: 100, status: 76, ansvarig: 90, request: 100 };
+
 const DEFAULT_PREFS = {
   visibleColumns: ALL_COLUMNS,
   sortKey: 'nr',
   sortDir: 'asc',
   typeFilter: ALL_TYPES,
+  columnWidths: DEFAULT_COLUMN_WIDTHS,
 };
 
 function makeStorageKey({ uid, companyId, projectId }) {
@@ -58,6 +64,12 @@ async function writeJson(key, value) {
   } catch (_e) {}
 }
 
+function clampWidth(w) {
+  const n = Number(w);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, Math.round(n)));
+}
+
 function normalizePrefs(prefs) {
   const inObj = prefs && typeof prefs === 'object' ? prefs : {};
 
@@ -71,7 +83,14 @@ function normalizePrefs(prefs) {
   const filteredTypes = typesRaw.filter((t) => ALL_TYPES.includes(t));
   const typeFilter = filteredTypes.length ? filteredTypes : DEFAULT_PREFS.typeFilter;
 
-  return { visibleColumns, sortKey, sortDir, typeFilter };
+  const rawWidths = inObj.columnWidths && typeof inObj.columnWidths === 'object' ? inObj.columnWidths : {};
+  const columnWidths = {};
+  ALL_COLUMNS.forEach((key) => {
+    const v = clampWidth(rawWidths[key]);
+    columnWidths[key] = v != null ? v : (DEFAULT_PREFS.columnWidths[key] ?? 100);
+  });
+
+  return { visibleColumns, sortKey, sortDir, typeFilter, columnWidths };
 }
 
 export function useInkopsplanUserPrefs({ companyId, projectId }) {

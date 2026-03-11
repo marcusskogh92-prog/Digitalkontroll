@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import React, { useState } from 'react';
 import { Modal, Platform, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MODAL_DESIGN_2026 as D } from '../../constants/modalDesign2026';
+import { useModalKeyboard } from '../../hooks/useModalKeyboard';
 
 const styles = StyleSheet.create({
   overlay: {
@@ -133,6 +134,8 @@ export default function ModalBase({
   const isCompact = headerVariant === 'neutralCompact';
   const headerStyle = isCompact ? styles.headerNeutralCompact : (isNeutralHeader ? styles.headerNeutral : styles.header);
   const [closeHover, setCloseHover] = useState(false);
+
+  useModalKeyboard(visible, onClose, undefined, { canSave: false, disabled: !visible });
   const closeBtnStyle = [
     styles.closeBtn,
     isNeutralHeader && closeHover && { backgroundColor: D.headerNeutralCloseBtnHover },
@@ -160,7 +163,7 @@ export default function ModalBase({
                   </Text>
                   {subtitle != null && subtitle !== '' ? (
                     <>
-                      <Text style={isCompact ? styles.separatorNeutralCompact : styles.separatorNeutral}>—</Text>
+                      <Text style={isCompact ? styles.separatorNeutralCompact : styles.separatorNeutral}>•</Text>
                       <Text style={[isCompact ? styles.subtitleNeutralCompact : styles.subtitleNeutral, { marginTop: 0, flex: 1, minWidth: 0 }]} numberOfLines={1} ellipsizeMode="tail">
                         {subtitle}
                       </Text>

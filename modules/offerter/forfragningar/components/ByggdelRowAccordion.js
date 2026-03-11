@@ -72,7 +72,7 @@ export default function ByggdelRowAccordion({
 
   const menuItems = [
     { key: 'edit', label: 'Redigera byggdel', disabled: locked, icon: <Ionicons name="create-outline" size={16} color="#334155" /> },
-    { key: 'delete', label: 'Ta bort byggdel', disabled: locked, icon: <Ionicons name="trash-outline" size={16} color="#64748b" /> },
+    { key: 'delete', label: 'Ta bort byggdel', disabled: locked, icon: <Ionicons name="trash-outline" size={16} color="#b91c1c" /> },
   ];
 
   return (

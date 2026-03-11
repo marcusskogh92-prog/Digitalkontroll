@@ -27,16 +27,16 @@ const CONFIRM_MODAL = {
   maxWidth: 480,
   /** När två val (t.ex. koppla bort / radera från register) – bredare så knapparna ryms */
   maxWidthTwoButtons: 520,
-  borderRadius: 12,
+  borderRadius: 8,
   paddingTop: 24,
   paddingHorizontal: 24,
   paddingBottom: 14,
   paddingBottomNoHints: 12,
   overlay: 'rgba(0,0,0,0.35)',
   shadowColor: '#000',
-  shadowOpacity: 0.12,
-  shadowRadius: 16,
-  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.08,
+  shadowRadius: 30,
+  shadowOffset: { width: 0, height: 10 },
   elevation: 8,
 
   titleFontSize: 18,
@@ -59,10 +59,10 @@ const CONFIRM_MODAL = {
   buttonRowMarginTop: 20,
   buttonGap: 12,
 
-  /** Avbryt – neutral grå (som tidigare i modalen) */
-  cancelBg: '#f1f5f9',
-  cancelBgHover: '#e2e8f0',
-  cancelText: '#0f172a',
+  /** Avbryt – dimmad röd enligt golden rule */
+  cancelBg: '#fef2f2',
+  cancelBgHover: '#fecaca',
+  cancelText: '#b91c1c',
   cancelBorderRadius: 6,
   cancelPaddingVertical: 4,
   cancelPaddingHorizontal: 10,

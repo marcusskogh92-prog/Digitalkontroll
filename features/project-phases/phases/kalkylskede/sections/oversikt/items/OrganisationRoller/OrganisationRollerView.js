@@ -1562,7 +1562,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                               })}
                             >
                               {({ hovered, pressed }) => (
-                                <Ionicons name="trash-outline" size={16} color={(hovered || pressed) ? COLORS.danger : COLORS.textSubtle} />
+                                <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
                               )}
                             </Pressable>
                           </View>

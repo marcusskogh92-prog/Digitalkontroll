@@ -1,20 +1,22 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { MODAL_DESIGN_2026 } from '../../../../constants/modalDesign2026';
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../../../constants/tableLayout';
 
 import { generatePersonalizedInquiry } from '../../../../components/firebase';
 import {
+    fetchSupplierContactsForInkopsplan,
     INKOPSPLAN_SUPPLIER_REQUEST_STATUS,
     markInkopsplanRowSupplierQuoteReceived,
     markInkopsplanRowSupplierRequestSent,
     removeInkopsplanRowSupplier,
     resetInkopsplanRowSupplierRequest,
+    setInkopsplanRowSupplierContact,
     setInkopsplanRowSupplierPersonalizedInquiry,
 } from '../inkopsplanService';
-import AddInkopsplanSupplierModal from './AddInkopsplanSupplierModal';
+import AddSupplierPicker from './AddSupplierPicker';
 import InkopsplanDocumentsModal from './InkopsplanDocumentsModal';
 
 const TABLE = MODAL_DESIGN_2026;
@@ -93,14 +95,18 @@ function contentWidthForColumn(headerLabel, cellTexts) {
   return Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, maxLen * CHARS_TO_WIDTH + CELL_PADDING));
 }
 
-export default function InkopsplanRowExpanded({ row, companyId, projectId, selectedSupplierKey, onSelectSupplier, onSupplierContextMenu }) {
+export default function InkopsplanRowExpanded({ row, companyId, projectId, selectedSupplierKey, onSelectSupplier, onSupplierContextMenu, onRowsChanged }) {
   const hasRow = row != null;
   const suppliers = Array.isArray(row?.suppliers) ? row.suppliers : [];
 
-  const [addSupplierOpen, setAddSupplierOpen] = useState(false);
+  const [addSupplierPickerOpen, setAddSupplierPickerOpen] = useState(false);
   const [documentsModalOpen, setDocumentsModalOpen] = useState(false);
   const [supplierBusyKey, setSupplierBusyKey] = useState('');
   const [generatingAiKey, setGeneratingAiKey] = useState('');
+  const [contactDropdownKey, setContactDropdownKey] = useState(null);
+  const [contactsList, setContactsList] = useState([]);
+  const [contactSearch, setContactSearch] = useState('');
+  const [loadingContacts, setLoadingContacts] = useState(false);
   const [columnWidths, setColumnWidths] = useState(DEFAULT_LEV_WIDTHS);
   const [sort, setSort] = useState({ sortKey: 'foretag', sortDir: 'asc' });
   const sortKey = sort.sortKey;
@@ -163,6 +169,45 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
       document.removeEventListener('mouseup', onUp);
     };
   }, []);
+
+  const openContactDropdown = useCallback(async (supplierKey, supplier) => {
+    const sid = safeText(supplier?.registryId);
+    if (!companyId || !sid) return;
+    setContactDropdownKey(supplierKey);
+    setContactSearch('');
+    setLoadingContacts(true);
+    setContactsList([]);
+    try {
+      const list = await fetchSupplierContactsForInkopsplan({
+        companyId,
+        supplierRegistryId: sid,
+        supplierCompanyId: safeText(supplier?.companyId) || null,
+      });
+      setContactsList(Array.isArray(list) ? list : []);
+    } catch (_e) {
+      setContactsList([]);
+    } finally {
+      setLoadingContacts(false);
+    }
+  }, [companyId]);
+
+  const closeContactDropdown = useCallback(() => {
+    setContactDropdownKey(null);
+    setContactSearch('');
+    setContactsList([]);
+  }, []);
+
+  const handlePickContact = useCallback(async (supplierKey, contact) => {
+    const rowId = safeText(row?.id);
+    if (!companyId || !projectId || !rowId) return;
+    try {
+      await setInkopsplanRowSupplierContact({ companyId, projectId, rowId, supplierKey, contact });
+      closeContactDropdown();
+      try { onRowsChanged?.(); } catch (_e) {}
+    } catch (e) {
+      Alert.alert('Kunde inte uppdatera kontakt', e?.message || 'Okänt fel');
+    }
+  }, [companyId, projectId, row?.id, closeContactDropdown, onRowsChanged]);
 
   const handleRemoveSupplier = async (supplierKey) => {
     const rowId = safeText(row?.id);
@@ -311,7 +356,7 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
     <View style={[styles.wrap, isWeb() && { minWidth: totalTableWidth }]}>
       <View style={styles.levToolbar}>
         <Pressable
-          onPress={() => setAddSupplierOpen(true)}
+          onPress={() => setAddSupplierPickerOpen(true)}
           disabled={!hasRow || !companyId || !projectId}
           style={({ hovered, pressed }) => [
             styles.levToolbarBtn,
@@ -459,7 +504,19 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
                 ]}
               >
                 <View style={[styles.cell, col('foretag')]}><Text style={styles.cellText} numberOfLines={1}>{label || '—'}</Text></View>
-                <View style={[styles.cell, col('kontaktperson')]}><Text style={styles.cellText} numberOfLines={1}>{safeText(s?.contactName) || '—'}</Text></View>
+                <View style={[styles.cell, col('kontaktperson'), styles.cellWithDropdown]}>
+                  {safeText(s?.registryId) ? (
+                    <Pressable
+                      onPress={(e) => { e?.stopPropagation?.(); openContactDropdown(supplierKey, s); }}
+                      style={({ hovered }) => [styles.contactCellTouch, hovered && styles.contactCellTouchHover]}
+                    >
+                      <Text style={styles.cellText} numberOfLines={1}>{safeText(s?.contactName) || 'Välj kontakt…'}</Text>
+                      <Ionicons name="chevron-down" size={14} color="#64748B" style={{ marginLeft: 4 }} />
+                    </Pressable>
+                  ) : (
+                    <Text style={styles.cellText} numberOfLines={1}>{safeText(s?.contactName) || '—'}</Text>
+                  )}
+                </View>
                 <View style={[styles.cell, col('roll')]}><Text style={[styles.cellText, styles.cellMuted]} numberOfLines={1}>{safeText(s?.role) || '—'}</Text></View>
                 <View style={[styles.cell, col('mobilnr')]}><Text style={styles.cellText} numberOfLines={1}>{safeText(s?.mobile) || '—'}</Text></View>
                 <View style={[styles.cell, col('arbete')]}><Text style={styles.cellText} numberOfLines={1}>{safeText(s?.phone) || '—'}</Text></View>
@@ -517,13 +574,64 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
         )}
       </View>
 
-      <AddInkopsplanSupplierModal
-        visible={addSupplierOpen}
-        onClose={() => setAddSupplierOpen(false)}
-        companyId={companyId}
-        projectId={projectId}
-        row={row}
-      />
+      {addSupplierPickerOpen ? (
+        <AddSupplierPicker
+          visible
+          onClose={() => setAddSupplierPickerOpen(false)}
+          companyId={companyId}
+          projectId={projectId}
+          row={row}
+          onAdded={() => { try { onRowsChanged?.(); } catch (_e) {} }}
+        />
+      ) : null}
+
+      {contactDropdownKey ? (
+        <View style={styles.contactDropdownWrap}>
+          <View style={styles.contactDropdownHeader}>
+            <Text style={styles.contactDropdownTitle}>Välj kontaktperson</Text>
+            <Pressable onPress={closeContactDropdown} style={({ hovered, pressed }) => [styles.contactDropdownClose, (hovered || pressed) && { opacity: 0.8 }]}>
+              <Ionicons name="close" size={20} color="#64748B" />
+            </Pressable>
+          </View>
+          <TextInput
+            value={contactSearch}
+            onChangeText={setContactSearch}
+            placeholder="Sök kontakt…"
+            style={styles.contactDropdownSearch}
+          />
+          <ScrollView style={styles.contactDropdownScroll} keyboardShouldPersistTaps="handled">
+            <Pressable
+              onPress={() => handlePickContact(contactDropdownKey, null)}
+              style={({ hovered, pressed }) => [styles.contactDropdownRow, (hovered || pressed) && styles.contactDropdownRowHover]}
+            >
+              <Text style={styles.contactDropdownRowName}>— Ingen kontakt</Text>
+            </Pressable>
+            {loadingContacts ? (
+              <View style={styles.contactDropdownLoading}><ActivityIndicator size="small" color="#64748B" /></View>
+            ) : (() => {
+              const q = String(contactSearch || '').trim().toLowerCase();
+              const filtered = q
+                ? contactsList.filter((c) => safeText(c?.name).toLowerCase().includes(q) || safeText(c?.email).toLowerCase().includes(q))
+                : contactsList;
+              if (filtered.length === 0) {
+                return <Text style={styles.contactDropdownEmpty}>Inga kontakter{contactSearch ? ' matchar sökningen' : ''}.</Text>;
+              }
+              return filtered.map((c) => (
+                <Pressable
+                  key={safeText(c?.id) || safeText(c?.name) || Math.random()}
+                  onPress={() => handlePickContact(contactDropdownKey, c)}
+                  style={({ hovered, pressed }) => [styles.contactDropdownRow, (hovered || pressed) && styles.contactDropdownRowHover]}
+                >
+                  <Text style={styles.contactDropdownRowName} numberOfLines={1}>{safeText(c?.name) || '—'}</Text>
+                  {safeText(c?.role) ? <Text style={styles.contactDropdownRowMeta} numberOfLines={1}>{safeText(c?.role)}</Text> : null}
+                  {safeText(c?.email) ? <Text style={styles.contactDropdownRowMeta} numberOfLines={1}>{safeText(c?.email)}</Text> : null}
+                </Pressable>
+              ));
+            })()}
+          </ScrollView>
+        </View>
+      ) : null}
+
       <InkopsplanDocumentsModal
         visible={documentsModalOpen}
         onClose={() => setDocumentsModalOpen(false)}
@@ -681,11 +789,99 @@ const styles = StyleSheet.create({
   cellMuted: {
     color: TABLE.tableCellMutedColor,
   },
+  cellWithDropdown: {
+    position: 'relative',
+  },
+  contactCellTouch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    minWidth: 0,
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+    borderRadius: 6,
+    ...(isWeb() ? { cursor: 'pointer' } : {}),
+  },
+  contactCellTouchHover: {
+    backgroundColor: '#EFF6FF',
+  },
   cellActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     flexShrink: 0,
+  },
+  contactDropdownWrap: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    overflow: 'hidden',
+    maxHeight: 320,
+  },
+  contactDropdownHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  contactDropdownTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  contactDropdownClose: {
+    padding: 4,
+    ...(isWeb() ? { cursor: 'pointer' } : {}),
+  },
+  contactDropdownSearch: {
+    height: 38,
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    marginHorizontal: 0,
+    fontSize: 13,
+    backgroundColor: '#fff',
+    color: '#0F172A',
+    ...(isWeb() ? { outlineStyle: 'none' } : {}),
+  },
+  contactDropdownScroll: {
+    maxHeight: 220,
+  },
+  contactDropdownLoading: {
+    padding: 24,
+    alignItems: 'center',
+  },
+  contactDropdownEmpty: {
+    fontSize: 12,
+    color: '#64748B',
+    padding: 16,
+  },
+  contactDropdownRow: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    ...(isWeb() ? { cursor: 'pointer' } : {}),
+  },
+  contactDropdownRowHover: {
+    backgroundColor: '#EEF6FF',
+  },
+  contactDropdownRowName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  contactDropdownRowMeta: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
   },
   resizeHandle: {
     width: RESIZE_HANDLE_HIT_WIDTH,

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { FILTER_ICON } from '../../../../constants/iconConstants';
 import StandardModal from '../../../../components/common/StandardModal';
 
 function safeText(v) {
@@ -85,7 +86,7 @@ export default function InkopsplanColumnsModal({
       onClose={onClose}
       title="Kolumner"
       subtitle="Välj vilka kolumner som ska visas"
-      iconName="options-outline"
+      iconName={FILTER_ICON}
       saveLabel="Spara"
       onSave={handleSave}
       saveDisabled={!canSave}
