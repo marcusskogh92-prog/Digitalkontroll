@@ -28,7 +28,9 @@ function RadioOption({ label, selected, onPress }) {
         selected && styles.radioSelected,
       ]}
     >
-      <View style={[styles.radioDot, selected && styles.radioDotSelected]} />
+      <View style={[styles.checkBox, selected && styles.checkBoxChecked]}>
+        {selected ? <Ionicons name="checkmark" size={11} color="#fff" /> : null}
+      </View>
       <Text style={styles.radioLabel}>{label}</Text>
     </Pressable>
   );
@@ -44,7 +46,9 @@ function CheckRow({ label, checked, disabled, onToggle }) {
         disabled && styles.checkRowDisabled,
       ]}
     >
-      <View style={[styles.checkBox, checked && styles.checkBoxChecked]} />
+      <View style={[styles.checkBox, checked && styles.checkBoxChecked]}>
+        {checked ? <Ionicons name="checkmark" size={11} color="#fff" /> : null}
+      </View>
       <Text style={styles.checkLabel} numberOfLines={1}>{label}</Text>
     </Pressable>
   );
@@ -232,20 +236,7 @@ export default function CreateInkopsplanModal({
 
   const footer = (
     <View style={styles.footerRow}>
-      <View style={styles.footerLeft}>
-        <Pressable
-          onPress={markAll}
-          style={({ hovered, pressed }) => [styles.footerLink, (hovered || pressed) && styles.footerLinkHover]}
-        >
-          <Text style={styles.footerLinkText}>Markera alla</Text>
-        </Pressable>
-        <Pressable
-          onPress={clearAll}
-          style={({ hovered, pressed }) => [styles.footerLink, (hovered || pressed) && styles.footerLinkHover]}
-        >
-          <Text style={styles.footerLinkText}>Avmarkera alla</Text>
-        </Pressable>
-      </View>
+      <View style={styles.footerLeft} />
       <View style={styles.footerRight}>
         <TouchableOpacity
           style={styles.footerBtnSecondary}
@@ -317,6 +308,20 @@ export default function CreateInkopsplanModal({
             <Text style={styles.stepTitle}>STEG 2</Text>
             <Text style={styles.stepText}>Välj poster ({selectedCount} valda)</Text>
           </View>
+          <View style={styles.step2Actions}>
+            <Pressable
+              onPress={markAll}
+              style={({ hovered, pressed }) => [styles.footerLink, (hovered || pressed) && styles.footerLinkHover]}
+            >
+              <Text style={styles.footerLinkText}>Markera alla</Text>
+            </Pressable>
+            <Pressable
+              onPress={clearAll}
+              style={({ hovered, pressed }) => [styles.footerLink, (hovered || pressed) && styles.footerLinkHover]}
+            >
+              <Text style={styles.footerLinkText}>Avmarkera alla</Text>
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.listBox}>
@@ -385,6 +390,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  step2Actions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   errorBox: {
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
@@ -435,17 +445,6 @@ const styles = StyleSheet.create({
   },
   radioSelected: {
     borderColor: D.titleColor,
-  },
-  radioDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 999,
-    borderWidth: 2,
-    borderColor: '#94A3B8',
-  },
-  radioDotSelected: {
-    borderColor: D.titleColor,
-    backgroundColor: D.titleColor,
   },
   radioLabel: {
     fontSize: 13,
@@ -500,16 +499,18 @@ const styles = StyleSheet.create({
     ...(isWeb() ? { cursor: 'default' } : {}),
   },
   checkBox: {
-    width: 16,
-    height: 16,
-    borderRadius: D.buttonRadius,
+    width: 18,
+    height: 18,
+    borderRadius: 4,
     borderWidth: 2,
-    borderColor: '#94A3B8',
+    borderColor: '#cbd5e1',
     backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   checkBoxChecked: {
-    borderColor: D.titleColor,
-    backgroundColor: D.titleColor,
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
   },
   checkLabel: {
     flex: 1,

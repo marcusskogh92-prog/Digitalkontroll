@@ -35,6 +35,7 @@ export default function InkopsplanView({ companyId, projectId }) {
   const [deleteSupplierBusy, setDeleteSupplierBusy] = useState(false);
   const [inkopMenu, setInkopMenu] = useState(null);
   const [levMenu, setLevMenu] = useState(null);
+  const [openAddSupplierForRowId, setOpenAddSupplierForRowId] = useState(null);
   const [inquiryModalRowId, setInquiryModalRowId] = useState(null);
   const [generatingInquiryDraft, setGeneratingInquiryDraft] = useState(false);
   const [deleteRowConfirm, setDeleteRowConfirm] = useState({ visible: false, row: null });
@@ -244,6 +245,17 @@ export default function InkopsplanView({ companyId, projectId }) {
     setLevMenu({ supplierKey, x: ev.clientX ?? ev.pageX ?? 0, y: ev.clientY ?? ev.pageY ?? 0 });
   }, []);
 
+  const handleRequestAddSupplier = useCallback((row) => {
+    if (row?.id) {
+      setExpandedRowId(row.id);
+      setOpenAddSupplierForRowId(row.id);
+    }
+  }, []);
+
+  const handleAddSupplierClosed = useCallback(() => {
+    setOpenAddSupplierForRowId(null);
+  }, []);
+
   return (
     <View style={styles.container}>
       <View style={styles.topBar}>
@@ -367,6 +379,9 @@ export default function InkopsplanView({ companyId, projectId }) {
                   onSupplierContextMenu={handleLevRowContextMenu}
                   onRowContextMenu={handleInkopRowContextMenu}
                   onOpenInquiryModal={openInquiryModalForRow}
+                  openAddSupplierForRowId={openAddSupplierForRowId}
+                  onRequestAddSupplier={handleRequestAddSupplier}
+                  onAddSupplierClosed={handleAddSupplierClosed}
                 />
               </View>
             </View>
@@ -394,6 +409,9 @@ export default function InkopsplanView({ companyId, projectId }) {
                 onSupplierContextMenu={handleLevRowContextMenu}
                 onRowContextMenu={handleInkopRowContextMenu}
                 onOpenInquiryModal={openInquiryModalForRow}
+                openAddSupplierForRowId={openAddSupplierForRowId}
+                onRequestAddSupplier={handleRequestAddSupplier}
+                onAddSupplierClosed={handleAddSupplierClosed}
               />
             </ScrollView>
           )}

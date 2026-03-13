@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, Fragment, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { MODAL_DESIGN_2026 } from '../../../../constants/modalDesign2026';
@@ -82,6 +82,8 @@ function contentWidthForColumn(headerLabel, cellTexts) {
   return Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, maxLen * CHARS_TO_WIDTH + CELL_PADDING));
 }
 
+const ADD_LEV_COL_WIDTH = 130;
+
 const InkopsplanTable = forwardRef(function InkopsplanTable({
   companyId,
   projectId,
@@ -97,6 +99,9 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
   onSupplierContextMenu,
   onRowContextMenu,
   onOpenInquiryModal,
+  openAddSupplierForRowId = null,
+  onRequestAddSupplier,
+  onAddSupplierClosed,
 }, ref) {
 
   const [savingManual, setSavingManual] = useState(false);
@@ -248,6 +253,7 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
     colStatus: col('status'),
     colAnsvarig: col('ansvarig'),
     colRequest: col('request'),
+    colAddLev: { width: ADD_LEV_COL_WIDTH, minWidth: ADD_LEV_COL_WIDTH, flexShrink: 0 },
   }), [col]);
 
   const getSortValue = useCallback((r, key) => {
@@ -352,7 +358,7 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
             const colId = def.id;
             if (!visibleColumns[colId]) return null;
             return (
-              <View key={colId}>
+              <Fragment key={colId}>
                 <View style={[styles.headerCell, col(colId)]}>
                   <Pressable onPress={() => handleSort(colId)} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
                     <Text style={[styles.headerText, isSorted(colId) && styles.headerTextSorted]} numberOfLines={1}>{def.label}</Text>
@@ -370,9 +376,10 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
                     <View style={styles.resizeHandleLine} />
                   </Pressable>
                 ) : null}
-              </View>
+              </Fragment>
             );
           })}
+          <View style={[styles.headerCell, tableStyles.colAddLev]} />
           <View style={styles.cellSpacer} />
         </View>
 
@@ -405,6 +412,7 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
                   projectMembers={projectMembers}
                   onRowsChanged={onRowsChanged}
                   onOpenInquiryModal={onOpenInquiryModal}
+                  onAddSupplierClick={onRequestAddSupplier}
                 />
                 {isExpanded ? (
                   <View style={styles.expandedWrap}>
@@ -416,6 +424,8 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
                       onSelectSupplier={onSelectSupplier}
                       onSupplierContextMenu={onSupplierContextMenu}
                       onRowsChanged={onRowsChanged}
+                      openAddSupplierForRowId={openAddSupplierForRowId}
+                      onAddSupplierClosed={onAddSupplierClosed}
                     />
                   </View>
                 ) : null}
@@ -492,6 +502,7 @@ const styles = StyleSheet.create({
     fontSize: TABLE.tableHeaderFontSize,
     fontWeight: TABLE.tableHeaderFontWeight,
     color: TABLE.tableHeaderColor,
+    textAlign: 'left',
   },
   headerTextSorted: {
     fontWeight: '700',
@@ -508,7 +519,7 @@ const styles = StyleSheet.create({
     minHeight: 0,
   },
   expandedWrap: {
-    paddingLeft: COL_EXPAND_WIDTH + 8,
+    paddingLeft: Platform.OS === 'web' ? 62 : 48,
     paddingRight: TABLE.tableCellPaddingHorizontal,
     paddingBottom: 12,
     borderBottomWidth: 1,

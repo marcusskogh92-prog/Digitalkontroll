@@ -2,6 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+let createPortal = null;
+if (typeof document !== 'undefined') {
+  try {
+    createPortal = require('react-dom').createPortal;
+  } catch (_) {}
+}
+
 import { MODAL_DESIGN_2026 } from '../../../../constants/modalDesign2026';
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../../../constants/tableLayout';
 
@@ -27,12 +34,12 @@ const RESIZE_HANDLE_HIT_WIDTH = 14;
 const CHARS_TO_WIDTH = 8;
 const CELL_PADDING = COLUMN_PADDING_LEFT + COLUMN_PADDING_RIGHT + 12;
 const DEFAULT_LEV_WIDTHS = {
-  foretag: 140, kontaktperson: 110, roll: 90, mobilnr: 100, arbete: 100,
+  foretag: 140, kontaktperson: 110, roll: 90, telefon: 200,
   mejladress: 140, status: 200, offert: 90,
 };
 const LEV_HEADERS = {
-  foretag: 'Företag', kontaktperson: 'Kontaktperson', roll: 'Roll', mobilnr: 'Mobilnr',
-  arbete: 'Arbete', mejladress: 'Mejladress', status: 'Status', offert: 'Offert',
+  foretag: 'Företag', kontaktperson: 'Kontaktperson', roll: 'Roll', telefon: 'Telefon',
+  mejladress: 'Mejladress', status: 'Status', offert: 'Offert',
 };
 
 function safeText(v) {
@@ -71,8 +78,14 @@ function getLevDisplayText(supplier, columnKey) {
   if (columnKey === 'foretag') return safeText(supplier?.companyName || supplier?.name || supplier?.id || supplier) || '—';
   if (columnKey === 'kontaktperson') return safeText(supplier?.contactName) || '—';
   if (columnKey === 'roll') return safeText(supplier?.role) || '—';
-  if (columnKey === 'mobilnr') return safeText(supplier?.mobile) || '—';
-  if (columnKey === 'arbete') return safeText(supplier?.phone) || '—';
+  if (columnKey === 'telefon') {
+    const mobil = safeText(supplier?.mobile);
+    const arbete = safeText(supplier?.phone);
+    if (mobil && arbete) return `Mobil: ${mobil} / Arbete: ${arbete}`;
+    if (mobil) return `Mobil: ${mobil}`;
+    if (arbete) return `Arbete: ${arbete}`;
+    return '—';
+  }
   if (columnKey === 'mejladress') return safeText(supplier?.email) || '—';
   if (columnKey === 'offert') return '—';
   if (columnKey === 'status') {
@@ -95,18 +108,22 @@ function contentWidthForColumn(headerLabel, cellTexts) {
   return Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, maxLen * CHARS_TO_WIDTH + CELL_PADDING));
 }
 
-export default function InkopsplanRowExpanded({ row, companyId, projectId, selectedSupplierKey, onSelectSupplier, onSupplierContextMenu, onRowsChanged }) {
+export default function InkopsplanRowExpanded({ row, companyId, projectId, selectedSupplierKey, onSelectSupplier, onSupplierContextMenu, onRowsChanged, openAddSupplierForRowId, onAddSupplierClosed }) {
   const hasRow = row != null;
   const suppliers = Array.isArray(row?.suppliers) ? row.suppliers : [];
+  const rowId = safeText(row?.id);
+  const shouldOpenAddSupplier = openAddSupplierForRowId != null && String(openAddSupplierForRowId) === rowId;
 
   const [addSupplierPickerOpen, setAddSupplierPickerOpen] = useState(false);
   const [documentsModalOpen, setDocumentsModalOpen] = useState(false);
   const [supplierBusyKey, setSupplierBusyKey] = useState('');
   const [generatingAiKey, setGeneratingAiKey] = useState('');
   const [contactDropdownKey, setContactDropdownKey] = useState(null);
+  const [contactDropdownRect, setContactDropdownRect] = useState(null);
   const [contactsList, setContactsList] = useState([]);
   const [contactSearch, setContactSearch] = useState('');
   const [loadingContacts, setLoadingContacts] = useState(false);
+  const contactDropdownRef = useRef(null);
   const [columnWidths, setColumnWidths] = useState(DEFAULT_LEV_WIDTHS);
   const [sort, setSort] = useState({ sortKey: 'foretag', sortDir: 'asc' });
   const sortKey = sort.sortKey;
@@ -125,6 +142,10 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
   }, [columnWidths]);
 
   const sortedSuppliersRef = useRef([]);
+
+  useEffect(() => {
+    if (shouldOpenAddSupplier) setAddSupplierPickerOpen(true);
+  }, [shouldOpenAddSupplier]);
 
   const widenColumn = useCallback((column) => {
     if (Platform.OS !== 'web') return;
@@ -170,13 +191,23 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
     };
   }, []);
 
-  const openContactDropdown = useCallback(async (supplierKey, supplier) => {
+  const openContactDropdown = useCallback(async (supplierKey, supplier, e) => {
     const sid = safeText(supplier?.registryId);
     if (!companyId || !sid) return;
     setContactDropdownKey(supplierKey);
     setContactSearch('');
     setLoadingContacts(true);
     setContactsList([]);
+    if (isWeb() && e?.nativeEvent?.target?.getBoundingClientRect) {
+      const rect = e.nativeEvent.target.getBoundingClientRect();
+      setContactDropdownRect({
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: Math.max(rect.width, 220),
+      });
+    } else {
+      setContactDropdownRect(null);
+    }
     try {
       const list = await fetchSupplierContactsForInkopsplan({
         companyId,
@@ -193,9 +224,20 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
 
   const closeContactDropdown = useCallback(() => {
     setContactDropdownKey(null);
+    setContactDropdownRect(null);
     setContactSearch('');
     setContactsList([]);
   }, []);
+
+  useEffect(() => {
+    if (!isWeb() || !contactDropdownKey) return;
+    const onMouseDown = (e) => {
+      const el = contactDropdownRef.current;
+      if (el && e.target && !el.contains(e.target)) closeContactDropdown();
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [contactDropdownKey, closeContactDropdown]);
 
   const handlePickContact = useCallback(async (supplierKey, contact) => {
     const rowId = safeText(row?.id);
@@ -308,8 +350,7 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
     if (key === 'foretag') return safeText(s?.companyName || s?.name || s?.id || s);
     if (key === 'kontaktperson') return safeText(s?.contactName);
     if (key === 'roll') return safeText(s?.role);
-    if (key === 'mobilnr') return safeText(s?.mobile);
-    if (key === 'arbete') return safeText(s?.phone);
+    if (key === 'telefon') return `${safeText(s?.mobile)} ${safeText(s?.phone)}`;
     if (key === 'mejladress') return safeText(s?.email);
     if (key === 'status') {
       const st = safeText(s?.requestStatus);
@@ -335,9 +376,9 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
   }, [sortedSuppliers]);
 
   const totalTableWidth = useMemo(() => {
-    const keys = ['foretag', 'kontaktperson', 'roll', 'mobilnr', 'arbete', 'mejladress', 'status', 'offert'];
+    const keys = ['foretag', 'kontaktperson', 'roll', 'telefon', 'mejladress', 'status', 'offert'];
     const sum = keys.reduce((acc, k) => acc + (columnWidths[k] || 0), 0);
-    return sum + 7 * RESIZE_HANDLE_HIT_WIDTH;
+    return sum + 6 * RESIZE_HANDLE_HIT_WIDTH;
   }, [columnWidths]);
 
   const handleSort = useCallback((key) => {
@@ -349,37 +390,9 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
 
   const isSorted = (key) => sortKey === key;
 
-  const canDeleteSupplier = Boolean(selectedSupplierKey && hasRow && companyId && projectId);
-  const deleteBusy = canDeleteSupplier && supplierBusyKey === selectedSupplierKey;
-
   return (
     <View style={[styles.wrap, isWeb() && { minWidth: totalTableWidth }]}>
       <View style={styles.levToolbar}>
-        <Pressable
-          onPress={() => setAddSupplierPickerOpen(true)}
-          disabled={!hasRow || !companyId || !projectId}
-          style={({ hovered, pressed }) => [
-            styles.levToolbarBtn,
-            (hovered || pressed) && styles.levToolbarBtnHover,
-            (!hasRow || !companyId || !projectId) && { opacity: 0.6 },
-          ]}
-        >
-          <Ionicons name="add-circle-outline" size={18} color="#2563EB" />
-          <Text style={styles.levToolbarBtnText}>Lägg till leverantör</Text>
-        </Pressable>
-        <Pressable
-          onPress={() => selectedSupplierKey && handleRemoveSupplier(selectedSupplierKey)}
-          disabled={!canDeleteSupplier || deleteBusy}
-          style={({ hovered, pressed }) => [
-            styles.levToolbarBtn,
-            styles.levToolbarBtnDanger,
-            (hovered || pressed) && canDeleteSupplier && styles.levToolbarBtnDangerHover,
-            (!canDeleteSupplier || deleteBusy) && { opacity: 0.6 },
-          ]}
-        >
-          <Ionicons name="trash-outline" size={18} color="#DC2626" />
-          <Text style={[styles.levToolbarBtnText, styles.levToolbarBtnTextDanger]}>Radera leverantör</Text>
-        </Pressable>
         <Pressable
           onPress={() => setDocumentsModalOpen(true)}
           style={({ hovered, pressed }) => [styles.levToolbarBtn, (hovered || pressed) && styles.levToolbarBtnHover]}
@@ -411,20 +424,13 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
             </Pressable>
           </View>
           {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('roll', e)} onDoubleClick={() => widenColumn('roll')}><View style={styles.resizeHandleLine} /></View>}
-          <View style={[styles.headerCell, col('mobilnr')]}>
-            <Pressable onPress={() => handleSort('mobilnr')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
-              <Text style={[styles.headerText, isSorted('mobilnr') && styles.headerTextSorted]} numberOfLines={1}>Mobilnr</Text>
-              {isSorted('mobilnr') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
+          <View style={[styles.headerCell, col('telefon')]}>
+            <Pressable onPress={() => handleSort('telefon')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
+              <Text style={[styles.headerText, isSorted('telefon') && styles.headerTextSorted]} numberOfLines={1}>Telefon</Text>
+              {isSorted('telefon') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
             </Pressable>
           </View>
-          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('mobilnr', e)} onDoubleClick={() => widenColumn('mobilnr')}><View style={styles.resizeHandleLine} /></View>}
-          <View style={[styles.headerCell, col('arbete')]}>
-            <Pressable onPress={() => handleSort('arbete')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
-              <Text style={[styles.headerText, isSorted('arbete') && styles.headerTextSorted]} numberOfLines={1}>Arbete</Text>
-              {isSorted('arbete') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
-            </Pressable>
-          </View>
-          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('arbete', e)} onDoubleClick={() => widenColumn('arbete')}><View style={styles.resizeHandleLine} /></View>}
+          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('telefon', e)} onDoubleClick={() => widenColumn('telefon')}><View style={styles.resizeHandleLine} /></View>}
           <View style={[styles.headerCell, col('mejladress')]}>
             <Pressable onPress={() => handleSort('mejladress')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
               <Text style={[styles.headerText, isSorted('mejladress') && styles.headerTextSorted]} numberOfLines={1}>Mejladress</Text>
@@ -450,11 +456,22 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
 
         {sortedSuppliers.length === 0 ? (
           <View style={[styles.tableRow, isWeb() && styles.tableRowGapWeb]}>
-            <View style={[styles.cell, col('foretag')]}><Text style={styles.muted} numberOfLines={1}>{hasRow ? 'Inga leverantörer kopplade ännu.' : 'Välj en rad i inköpsstrukturen ovan.'}</Text></View>
+            <View style={[styles.cell, col('foretag'), styles.emptyLevCell]}>
+              <Text style={styles.muted} numberOfLines={1}>{hasRow ? 'Inga leverantörer kopplade ännu.' : 'Välj en rad i inköpsstrukturen ovan.'}</Text>
+              {hasRow && companyId && projectId ? (
+                <Pressable
+                  onPress={() => setAddSupplierPickerOpen(true)}
+                  style={({ hovered, pressed }) => [styles.emptyLevAddBtn, (hovered || pressed) && styles.emptyLevAddBtnHover]}
+                  {...(isWeb() ? { cursor: 'pointer' } : {})}
+                >
+                  <Ionicons name="add-circle-outline" size={18} color="#2563EB" />
+                  <Text style={styles.emptyLevAddBtnText}>Lägg till leverantör</Text>
+                </Pressable>
+              ) : null}
+            </View>
             <View style={[styles.cell, col('kontaktperson')]} />
             <View style={[styles.cell, col('roll')]} />
-            <View style={[styles.cell, col('mobilnr')]} />
-            <View style={[styles.cell, col('arbete')]} />
+            <View style={[styles.cell, col('telefon')]} />
             <View style={[styles.cell, col('mejladress')]} />
             <View style={[styles.cell, col('status')]} />
             <View style={[styles.cell, col('offert')]} />
@@ -507,7 +524,7 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
                 <View style={[styles.cell, col('kontaktperson'), styles.cellWithDropdown]}>
                   {safeText(s?.registryId) ? (
                     <Pressable
-                      onPress={(e) => { e?.stopPropagation?.(); openContactDropdown(supplierKey, s); }}
+                      onPress={(e) => { e?.stopPropagation?.(); openContactDropdown(supplierKey, s, e); }}
                       style={({ hovered }) => [styles.contactCellTouch, hovered && styles.contactCellTouchHover]}
                     >
                       <Text style={styles.cellText} numberOfLines={1}>{safeText(s?.contactName) || 'Välj kontakt…'}</Text>
@@ -518,8 +535,41 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
                   )}
                 </View>
                 <View style={[styles.cell, col('roll')]}><Text style={[styles.cellText, styles.cellMuted]} numberOfLines={1}>{safeText(s?.role) || '—'}</Text></View>
-                <View style={[styles.cell, col('mobilnr')]}><Text style={styles.cellText} numberOfLines={1}>{safeText(s?.mobile) || '—'}</Text></View>
-                <View style={[styles.cell, col('arbete')]}><Text style={styles.cellText} numberOfLines={1}>{safeText(s?.phone) || '—'}</Text></View>
+                <View style={[styles.cell, col('telefon')]}>
+                  <Text style={styles.cellText} numberOfLines={1}>
+                    {(() => {
+                      const mobil = safeText(s?.mobile);
+                      const arbete = safeText(s?.phone);
+                      if (mobil && arbete) {
+                        return (
+                          <>
+                            <Text style={[styles.cellText, styles.cellTextLabel]}>Mobil: </Text>
+                            <Text style={styles.cellTextNumber}>{mobil}</Text>
+                            <Text style={[styles.cellText, styles.cellTextLabel]}> / Arbete: </Text>
+                            <Text style={styles.cellTextNumber}>{arbete}</Text>
+                          </>
+                        );
+                      }
+                      if (mobil) {
+                        return (
+                          <>
+                            <Text style={[styles.cellText, styles.cellTextLabel]}>Mobil: </Text>
+                            <Text style={styles.cellTextNumber}>{mobil}</Text>
+                          </>
+                        );
+                      }
+                      if (arbete) {
+                        return (
+                          <>
+                            <Text style={[styles.cellText, styles.cellTextLabel]}>Arbete: </Text>
+                            <Text style={styles.cellTextNumber}>{arbete}</Text>
+                          </>
+                        );
+                      }
+                      return '—';
+                    })()}
+                  </Text>
+                </View>
                 <View style={[styles.cell, col('mejladress')]}><Text style={styles.cellText} numberOfLines={1}>{safeText(s?.email) || '—'}</Text></View>
                 <View style={[styles.cell, col('status')]}>
                   <Text style={styles.cellText} numberOfLines={1}>{statusText}</Text>
@@ -539,9 +589,6 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
                         <Text style={styles.actionLinkMuted}>Ångra</Text>
                       </Pressable>
                     ) : null}
-                    <Pressable onPress={(e) => { e?.stopPropagation?.(); handleRemoveSupplier(supplierKey); }} disabled={busy} style={({ hovered, pressed }) => [styles.removeLinkWrap, (hovered || pressed) && styles.removeLinkHover, busy && { opacity: 0.6 }]}>
-                      <Text style={styles.removeLink}>Ta bort</Text>
-                    </Pressable>
                   </View>
                 </View>
                 <View style={[styles.cell, col('offert'), styles.offertCellWrap]}>
@@ -577,7 +624,10 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
       {addSupplierPickerOpen ? (
         <AddSupplierPicker
           visible
-          onClose={() => setAddSupplierPickerOpen(false)}
+          onClose={() => {
+            setAddSupplierPickerOpen(false);
+            onAddSupplierClosed?.();
+          }}
           companyId={companyId}
           projectId={projectId}
           row={row}
@@ -586,50 +636,102 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
       ) : null}
 
       {contactDropdownKey ? (
-        <View style={styles.contactDropdownWrap}>
-          <View style={styles.contactDropdownHeader}>
-            <Text style={styles.contactDropdownTitle}>Välj kontaktperson</Text>
-            <Pressable onPress={closeContactDropdown} style={({ hovered, pressed }) => [styles.contactDropdownClose, (hovered || pressed) && { opacity: 0.8 }]}>
-              <Ionicons name="close" size={20} color="#64748B" />
-            </Pressable>
-          </View>
-          <TextInput
-            value={contactSearch}
-            onChangeText={setContactSearch}
-            placeholder="Sök kontakt…"
-            style={styles.contactDropdownSearch}
-          />
-          <ScrollView style={styles.contactDropdownScroll} keyboardShouldPersistTaps="handled">
-            <Pressable
-              onPress={() => handlePickContact(contactDropdownKey, null)}
-              style={({ hovered, pressed }) => [styles.contactDropdownRow, (hovered || pressed) && styles.contactDropdownRowHover]}
+        isWeb() && contactDropdownRect && createPortal ? (
+          createPortal(
+            <View
+              ref={contactDropdownRef}
+              style={[
+                styles.contactDropdownFloating,
+                {
+                  position: 'fixed',
+                  top: contactDropdownRect.top,
+                  left: contactDropdownRect.left,
+                  width: contactDropdownRect.width,
+                  zIndex: 10000,
+                },
+              ]}
             >
-              <Text style={styles.contactDropdownRowName}>— Ingen kontakt</Text>
-            </Pressable>
-            {loadingContacts ? (
-              <View style={styles.contactDropdownLoading}><ActivityIndicator size="small" color="#64748B" /></View>
-            ) : (() => {
-              const q = String(contactSearch || '').trim().toLowerCase();
-              const filtered = q
-                ? contactsList.filter((c) => safeText(c?.name).toLowerCase().includes(q) || safeText(c?.email).toLowerCase().includes(q))
-                : contactsList;
-              if (filtered.length === 0) {
-                return <Text style={styles.contactDropdownEmpty}>Inga kontakter{contactSearch ? ' matchar sökningen' : ''}.</Text>;
-              }
-              return filtered.map((c) => (
+              <TextInput
+                value={contactSearch}
+                onChangeText={setContactSearch}
+                placeholder="Sök kontakt…"
+                style={styles.contactDropdownSearch}
+              />
+              <ScrollView style={styles.contactDropdownScroll} keyboardShouldPersistTaps="handled">
                 <Pressable
-                  key={safeText(c?.id) || safeText(c?.name) || Math.random()}
-                  onPress={() => handlePickContact(contactDropdownKey, c)}
+                  onPress={() => handlePickContact(contactDropdownKey, null)}
                   style={({ hovered, pressed }) => [styles.contactDropdownRow, (hovered || pressed) && styles.contactDropdownRowHover]}
                 >
-                  <Text style={styles.contactDropdownRowName} numberOfLines={1}>{safeText(c?.name) || '—'}</Text>
-                  {safeText(c?.role) ? <Text style={styles.contactDropdownRowMeta} numberOfLines={1}>{safeText(c?.role)}</Text> : null}
-                  {safeText(c?.email) ? <Text style={styles.contactDropdownRowMeta} numberOfLines={1}>{safeText(c?.email)}</Text> : null}
+                  <Text style={styles.contactDropdownRowName}>— Ingen kontakt</Text>
                 </Pressable>
-              ));
-            })()}
-          </ScrollView>
-        </View>
+                {loadingContacts ? (
+                  <View style={styles.contactDropdownLoading}><ActivityIndicator size="small" color="#64748B" /></View>
+                ) : (() => {
+                  const q = String(contactSearch || '').trim().toLowerCase();
+                  const filtered = q
+                    ? contactsList.filter((c) => safeText(c?.name).toLowerCase().includes(q) || safeText(c?.email).toLowerCase().includes(q))
+                    : contactsList;
+                  if (filtered.length === 0) {
+                    return <Text style={styles.contactDropdownEmpty}>Inga kontakter{contactSearch ? ' matchar sökningen' : ''}.</Text>;
+                  }
+                  return filtered.map((c) => (
+                    <Pressable
+                      key={safeText(c?.id) || safeText(c?.name) || Math.random()}
+                      onPress={() => handlePickContact(contactDropdownKey, c)}
+                      style={({ hovered, pressed }) => [styles.contactDropdownRow, (hovered || pressed) && styles.contactDropdownRowHover]}
+                    >
+                      <Text style={styles.contactDropdownRowName} numberOfLines={1}>{safeText(c?.name) || '—'}</Text>
+                    </Pressable>
+                  ));
+                })()}
+              </ScrollView>
+            </View>,
+            document.body,
+          )
+        ) : !contactDropdownRect ? (
+          <View style={styles.contactDropdownWrap}>
+            <View style={styles.contactDropdownHeader}>
+              <Text style={styles.contactDropdownTitle}>Välj kontaktperson</Text>
+              <Pressable onPress={closeContactDropdown} style={({ hovered, pressed }) => [styles.contactDropdownClose, (hovered || pressed) && { opacity: 0.8 }]}>
+                <Ionicons name="close" size={20} color="#64748B" />
+              </Pressable>
+            </View>
+            <TextInput
+              value={contactSearch}
+              onChangeText={setContactSearch}
+              placeholder="Sök kontakt…"
+              style={styles.contactDropdownSearch}
+            />
+            <ScrollView style={styles.contactDropdownScroll} keyboardShouldPersistTaps="handled">
+              <Pressable
+                onPress={() => handlePickContact(contactDropdownKey, null)}
+                style={({ hovered, pressed }) => [styles.contactDropdownRow, (hovered || pressed) && styles.contactDropdownRowHover]}
+              >
+                <Text style={styles.contactDropdownRowName}>— Ingen kontakt</Text>
+              </Pressable>
+              {loadingContacts ? (
+                <View style={styles.contactDropdownLoading}><ActivityIndicator size="small" color="#64748B" /></View>
+              ) : (() => {
+                const q = String(contactSearch || '').trim().toLowerCase();
+                const filtered = q
+                  ? contactsList.filter((c) => safeText(c?.name).toLowerCase().includes(q) || safeText(c?.email).toLowerCase().includes(q))
+                  : contactsList;
+                if (filtered.length === 0) {
+                  return <Text style={styles.contactDropdownEmpty}>Inga kontakter{contactSearch ? ' matchar sökningen' : ''}.</Text>;
+                }
+                return filtered.map((c) => (
+                  <Pressable
+                    key={safeText(c?.id) || safeText(c?.name) || Math.random()}
+                    onPress={() => handlePickContact(contactDropdownKey, c)}
+                    style={({ hovered, pressed }) => [styles.contactDropdownRow, (hovered || pressed) && styles.contactDropdownRowHover]}
+                  >
+                    <Text style={styles.contactDropdownRowName} numberOfLines={1}>{safeText(c?.name) || '—'}</Text>
+                  </Pressable>
+                ));
+              })()}
+            </ScrollView>
+          </View>
+        ) : null
       ) : null}
 
       <InkopsplanDocumentsModal
@@ -716,6 +818,7 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     justifyContent: 'flex-start',
     alignItems: 'flex-start',
+    width: '100%',
   },
   headerSortable: {
     flexDirection: 'row',
@@ -743,6 +846,7 @@ const styles = StyleSheet.create({
     fontSize: TABLE.tableHeaderFontSize,
     fontWeight: TABLE.tableHeaderFontWeight,
     color: TABLE.tableHeaderColor,
+    textAlign: 'left',
   },
   tableEmpty: {
     minHeight: 140,
@@ -778,6 +882,7 @@ const styles = StyleSheet.create({
     paddingLeft: COLUMN_PADDING_LEFT,
     paddingRight: COLUMN_PADDING_RIGHT,
     justifyContent: 'center',
+    alignItems: 'flex-start',
     minWidth: 0,
   },
   cellText: {
@@ -785,6 +890,15 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: TABLE.tableCellColor,
     minWidth: 0,
+    textAlign: 'left',
+  },
+  cellTextLabel: {
+    fontWeight: '700',
+  },
+  cellTextNumber: {
+    fontSize: TABLE.tableCellFontSize,
+    fontWeight: '400',
+    color: TABLE.tableCellColor,
   },
   cellMuted: {
     color: TABLE.tableCellMutedColor,
@@ -810,6 +924,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     flexShrink: 0,
+  },
+  contactDropdownFloating: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    overflow: 'hidden',
+    maxHeight: 280,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 8,
   },
   contactDropdownWrap: {
     marginTop: 10,
@@ -875,7 +1002,7 @@ const styles = StyleSheet.create({
   },
   contactDropdownRowName: {
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '500',
     color: '#0F172A',
   },
   contactDropdownRowMeta: {
@@ -962,6 +1089,28 @@ const styles = StyleSheet.create({
   muted: {
     fontSize: 13,
     color: '#64748B',
+  },
+  emptyLevCell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  emptyLevAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+  },
+  emptyLevAddBtnHover: {
+    backgroundColor: '#EFF6FF',
+  },
+  emptyLevAddBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#2563EB',
   },
   errorText: {
     fontSize: 12,

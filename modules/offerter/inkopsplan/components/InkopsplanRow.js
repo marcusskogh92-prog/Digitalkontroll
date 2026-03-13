@@ -129,6 +129,7 @@ export default function InkopsplanRow({
   projectMembers = [],
   onRowsChanged,
   onOpenInquiryModal,
+  onAddSupplierClick,
 }) {
   const [editingCell, setEditingCell] = useState(null);
   const [editValue, setEditValue] = useState('');
@@ -532,9 +533,11 @@ export default function InkopsplanRow({
       {(visibleColumns?.status !== false) ? (
       <Pressable
         onPress={() => onSelectRow?.(row)}
-        style={({ hovered }) => [ts.cell, ts.colStatus, hovered && ts.rowHover]}
+        style={({ hovered }) => [ts.cell, ts.colStatus, styles.statusCellAlign, hovered && ts.rowHover]}
       >
-        <InkopsplanStatusBadge status={overallStatus} />
+        <View style={styles.statusBadgeWrap}>
+          <InkopsplanStatusBadge status={overallStatus} />
+        </View>
       </Pressable>
       ) : null}
       {(visibleColumns?.ansvarig !== false) ? (
@@ -591,7 +594,7 @@ export default function InkopsplanRow({
             onSelectRow?.(row);
           }
         }}
-        style={({ hovered }) => [ts.cell, ts.colRequest, styles.requestCellWrap, hovered && ts.rowHover]}
+        style={({ hovered }) => [ts.cell, ts.colRequest, styles.requestCellWrap, styles.cellAlignStart, hovered && ts.rowHover]}
       >
         {inquiryDraft ? (
           <Ionicons name="checkmark-circle" size={16} color="#22C55E" style={styles.requestCellIcon} />
@@ -601,6 +604,17 @@ export default function InkopsplanRow({
         </Text>
       </Pressable>
       ) : null}
+      <Pressable
+        onPress={(e) => {
+          e?.stopPropagation?.();
+          onAddSupplierClick?.(row);
+        }}
+        style={({ hovered }) => [ts.cell, ts.colAddLev, styles.addLevCellWrap, styles.addLevCellAlign, hovered && ts.rowHover]}
+        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+      >
+        <Ionicons name="add-circle-outline" size={16} color="#2563EB" />
+        <Text style={styles.addLevText} numberOfLines={1}>Lägg till leverantör</Text>
+      </Pressable>
     </View>
   );
 }
@@ -701,6 +715,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 10,
   },
+  cellAlignStart: {
+    alignItems: 'flex-start',
+  },
   requestCellWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -711,5 +728,27 @@ const styles = StyleSheet.create({
   },
   requestCellIcon: {
     flexShrink: 0,
+  },
+  statusCellAlign: {
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+  },
+  statusBadgeWrap: {
+    alignSelf: 'flex-start',
+  },
+  addLevCellWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 6,
+  },
+  addLevCellAlign: {
+    alignSelf: 'stretch',
+    minWidth: 0,
+  },
+  addLevText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#2563EB',
   },
 });
